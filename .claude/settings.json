@@ -65,10 +65,29 @@
       "Bash(grep -rniE \"groq|openrouter|fallback.?backend|model-agnostic|multi-backend|claude auth\\\\b\" *.md docs/*.md)",
       "Bash(grep -rniE \"pure agent|deliberate|multiplexer|the value is the agent\" *.md docs/*.md)",
       "Bash(grep -rniE \"75 test|31 check|six \\(specialised|specialized\\)|five agents|10 cases|briefing 10\" *.md docs/*.md)",
-      "Bash(./.venv/Scripts/python.exe -m pip install \"reportlab>=4.0\")"
+      "Bash(./.venv/Scripts/python.exe -m pip install \"reportlab>=4.0\")",
+      "PowerShell(git remote add cortex https://github.com/ridham-ps/Cortex.git)",
+      "PowerShell(git push cortex dev-claude-sdk:main 2>&1)",
+      "PowerShell(git fetch cortex)",
+      "PowerShell(git branch --set-upstream-to=cortex/main dev-claude-sdk)",
+      "PowerShell(git config push.default upstream)",
+      "PowerShell(git config remote.pushDefault cortex)",
+      "PowerShell(git rev-parse --abbrev-ref dev-claude-sdk@{upstream}; git config --get push.default; git config --get remote.pushDefault; git push -v --dry-run 2>&1 | Select-Object -First 5)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('onboarding_brain/kt/tour.py'\\).read\\(\\)\\); ast.parse\\(open\\('onboarding_brain/contract.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_kt.py -q -k \"tour or wiring\")",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_kt.py tests/test_api.py -q)",
+      "Bash(ONBOARDING_LLM_BACKEND=claude_sdk ./.venv/Scripts/python.exe -m uvicorn api.server:app --port 8077 --log-level warning)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8077/health)",
+      "Bash(break)",
+      "Bash(curl -s \"http://localhost:8077/v1/tour/vt?refresh=true\" -H \"Authorization: Bearer dev-local-key\")",
+      "Bash(./.venv/Scripts/python.exe -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('total_stops',d['total_stops'],'flow_graph_edges',len\\(\\(d.get\\('flow_graph'\\) or {}\\).get\\('edges',[]\\)\\), 'narrated',d.get\\('narrated'\\)\\); s=d['chapters'][0]['stops'][0]; print\\('first stop',s['path'],'connections',[\\(c['direction'],c['path'].split\\('/'\\)[-1]\\) for c in s.get\\('connections',[]\\)]\\)\")",
+      "Bash(./.venv/Scripts/python.exe -c \"import playwright; print\\('py-playwright', playwright.__version__\\)\")",
+      "Bash(node -e \"try{require.resolve\\('playwright'\\);console.log\\('node-playwright yes'\\)}catch\\(e\\){console.log\\('node-playwright no'\\)}\")",
+      "Bash(node -e \"try{require.resolve\\('puppeteer'\\);console.log\\('puppeteer yes'\\)}catch\\(e\\){console.log\\('puppeteer no'\\)}\")"
     ],
     "additionalDirectories": [
-      "C:\\Users\\RidhamPansuriya\\.claude\\projects\\c--Users-RidhamPansuriya-Desktop-onboarding-brain-L3-Hands-on"
+      "C:\\Users\\RidhamPansuriya\\.claude\\projects\\c--Users-RidhamPansuriya-Desktop-onboarding-brain-L3-Hands-on",
+      "c:\\Users\\RidhamPansuriya\\.claude\\projects\\c--Users-RidhamPansuriya-Desktop-onboarding-brain-L3-Hands-on\\memory"
     ]
   }
 }

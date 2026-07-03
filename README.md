@@ -28,7 +28,7 @@ invents file names, features, or answers.
 
 ## How it works
 
-Cortex is a **Level-3 agent**: the Claude model plans, picks its own tools, and decides
+Cortex is an **agentic system**: the Claude model plans, picks its own tools, and decides
 when it has enough to answer. Cortex's job is to give it a read-only, code-aware view of a
 search index — and to reconstruct each answer's sources from the files it actually read.
 
@@ -191,7 +191,7 @@ Cortex is really a few small, focused helpers ("agents") that share the same bra
 
 - **Install guide** — the tools and versions you need, pulled from the project's own
   config files.
-- **Chat** (`kt-agent-v1`) — ask anything; a Level-3 AI agent that reasons over 9 tools
+- **Chat** (`kt-agent-v1`) — ask anything; an AI agent that reasons over 9 tools
   (search, read, grep, symbol lookup, dependency parsing, call graphs, AST-level search)
   and cites the exact files and lines each answer came from.
 - **Guided tour** — a "read these files, in this order" path through the code, with a

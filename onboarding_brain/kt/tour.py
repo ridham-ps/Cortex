@@ -28,7 +28,8 @@ from ..config import Settings, get_settings
 from ..trace import logger
 from .knowledge import load_annotations
 from .store import _NOISE_PATH, get_store, slugify
-from .wiring import _IMPORT, _basekey, _dirname, _import_basekey, _role, build_wiring, entry_score
+from .wiring import (_IMPORT, _basekey, _dirname, _import_basekey,
+                     _imported_names, _role, _symbols, build_wiring, entry_score)
 
 # real source we tour through (includes Angular .module.ts, which the KB's
 # _is_logic_file drops — the app wiring lives there)
@@ -220,13 +221,13 @@ def _adaptive_stop_budget(n_logic: int, populated_chapters: int, settings: Setti
     than the files that actually exist. So a 5-file util gets a short tour and a
     big monorepo gets a fuller (but still finishable) one — never a flat 12."""
     lo, hi = settings.tour_min_stops, settings.tour_max_stops
-    by_area = populated_chapters * 2
-    by_size = -(-n_logic // 10)  # ceil(n_logic / 10)
+    by_area = populated_chapters * 3
+    by_size = -(-n_logic // 7)  # ceil(n_logic / 7)
     target = max(by_area, by_size)
     return min(n_logic, max(lo, min(hi, target)))
 
 
-def build_tour(namespace: str, *, max_stops: Optional[int] = None, max_per_chapter: int = 4,
+def build_tour(namespace: str, *, max_stops: Optional[int] = None, max_per_chapter: int = 6,
                narrate: bool = False, settings: Optional[Settings] = None) -> dict:
     settings = settings or get_settings()
     store = get_store(settings)
@@ -264,8 +265,11 @@ def build_tour(namespace: str, *, max_stops: Optional[int] = None, max_per_chapt
     # bucket every file into a fixed flow chapter by role/path (robust), then
     # order within a chapter by depth -> role -> in-degree -> path
     buckets: dict[str, list[str]] = {t: [] for t in _FLOW}
+    chapter_by_path: dict[str, str] = {}
     for p in paths:
-        buckets[_chapter_of(p, _role(p), p in entry_set)].append(p)
+        ch = _chapter_of(p, _role(p), p in entry_set)
+        buckets[ch].append(p)
+        chapter_by_path[p] = ch
     for t in _FLOW:
         buckets[t].sort(key=lambda p: (depth.get(p, 99), _ROLE_RANK.get(_role(p), 2),
                                        -indeg.get(p, 0), p))
@@ -301,6 +305,69 @@ def build_tour(namespace: str, *, max_stops: Optional[int] = None, max_per_chapt
             out_chapters.append({"title": title, "why": _CHAPTER_WHY[title], "stops": stops})
             budget -= len(stops)
 
+    # ---- branching data: how the SELECTED stops connect to each other --------
+    # The tour is presented as a walkable graph, not just a line: each stop
+    # advertises the other stops it imports ("uses") and the stops that import
+    # it ("used_by"), each labelled with the real symbol names crossing that
+    # edge. This is what lets the UI offer "this connects to X and Y — which do
+    # you want to follow?" and lets a newcomer branch, then backtrack to explore
+    # the other path. All derived from the static import graph — nothing invented.
+    stop_set = set(all_paths)
+    incoming: dict[str, list[str]] = {p: [] for p in all_paths}
+    for src in all_paths:
+        for dst in out_adj.get(src, []):
+            if dst in stop_set and dst != src:
+                incoming[dst].append(src)
+
+    def _connections_for(p: str) -> list[dict]:
+        conns: list[dict] = []
+        seen: set = set()
+        for dst in out_adj.get(p, []):        # this file USES dst
+            if dst in stop_set and dst != p and dst not in seen:
+                seen.add(dst)
+                conns.append({
+                    "path": dst, "direction": "uses",
+                    "symbols": _imported_names(text_by_path.get(p, ""), dst),
+                    "chapter": chapter_by_path.get(dst, ""), "is_entry": dst in entry_set,
+                })
+        for src in incoming.get(p, []):       # src USES this file (used_by)
+            if src != p and src not in seen:
+                seen.add(src)
+                conns.append({
+                    "path": src, "direction": "used_by",
+                    "symbols": _imported_names(text_by_path.get(src, ""), p),
+                    "chapter": chapter_by_path.get(src, ""), "is_entry": src in entry_set,
+                })
+        return conns[:8]
+
+    for ch in out_chapters:
+        for s in ch["stops"]:
+            s["connections"] = _connections_for(s["path"])
+
+    # A compact directed graph over just the tour stops, for the live mini-map.
+    max_seen = max((depth.get(p, 0) for p in all_paths if depth.get(p, 99) < 99),
+                   default=0)
+    flow_nodes = []
+    for ch in out_chapters:
+        for s in ch["stops"]:
+            p = s["path"]
+            d = s["depth"] if s["depth"] < 99 else max_seen + 1
+            flow_nodes.append({
+                "id": p, "label": p.rsplit("/", 1)[-1], "role": _role(p),
+                "dir": _dirname(p), "path": p, "depth": d, "entry": s["is_entry"],
+                "chapter": ch["title"], "symbols": _symbols(text_by_path.get(p, ""), p),
+            })
+    flow_edges = []
+    seen_edge: set = set()
+    for src in all_paths:
+        for dst in out_adj.get(src, []):
+            if dst in stop_set and dst != src and (src, dst) not in seen_edge:
+                seen_edge.add((src, dst))
+                flow_edges.append({"from": src, "to": dst, "kind": "import",
+                                   "imports": _imported_names(text_by_path.get(src, ""), dst)})
+    flow_graph = {"nodes": flow_nodes, "edges": flow_edges,
+                  "entry": entries[0] if entries else None}
+
     wiring = None
     try:
         wiring = build_wiring(ns, all_paths, settings=settings)
@@ -315,7 +382,7 @@ def build_tour(namespace: str, *, max_stops: Optional[int] = None, max_per_chapt
         "namespace": ns, "overview": overview,
         "entry_point": entries[0] if entries else None, "entry_points": entries,
         "total_stops": len(all_paths), "chapters": out_chapters, "wiring": wiring,
-        "narrated": False,
+        "flow_graph": flow_graph, "narrated": False,
     }
 
     # Optional LLM narration: one batched call adds a plain-English "what & why"

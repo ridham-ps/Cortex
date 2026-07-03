@@ -106,6 +106,9 @@ class TourStop(BaseModel):
     insight: str = ""          # LLM one-liner: what this file does & why it matters here
     note: str = ""             # captured team annotation, if any
     is_entry: bool = False
+    # how this stop connects to OTHER stops, for branching navigation. Each item:
+    # {path, direction: "uses"|"used_by", symbols: [...], chapter, is_entry}
+    connections: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TourChapter(BaseModel):
@@ -122,6 +125,7 @@ class TourResponse(BaseModel):
     total_stops: int = 0
     chapters: list[TourChapter] = Field(default_factory=list)
     wiring: dict[str, Any] | None = None
+    flow_graph: dict[str, Any] | None = None  # directed graph over the stops (mini-map + branching)
     narrated: bool = False      # True once LLM stop-insights have been added
 
 

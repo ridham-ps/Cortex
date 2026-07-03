@@ -475,6 +475,43 @@
   .tour-map{margin-top:22px}
   .tour-map-h{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
     color:var(--muted);margin-bottom:8px}
+  /* branching tour: breadcrumb trail */
+  .tour-trail{display:flex;align-items:center;flex-wrap:wrap;gap:2px;margin-bottom:12px;
+    font-family:var(--f-mono);font-size:12px}
+  .tour-crumb{background:none;border:none;color:var(--muted);cursor:pointer;padding:2px 5px;
+    border-radius:6px;font-family:inherit;font-size:12px;transition:.12s;max-width:180px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tour-crumb:hover{color:var(--brand-ink);background:var(--brand-soft)}
+  .tour-crumb.cur{color:var(--brand-ink);font-weight:700}
+  .tour-crumb-sep{color:var(--faint);font-size:11px}
+  /* branching tour: connection choices */
+  .tour-branch{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line-strong)}
+  .tour-branch-h{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--brand-ink);margin:0 0 9px}
+  .tour-branch-h.up{color:var(--muted);margin-top:14px}
+  .tour-branch-leaf{font-size:13.5px;color:var(--muted);line-height:1.55}
+  .tour-conns{display:flex;flex-direction:column;gap:7px}
+  .tour-conn{display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;
+    background:var(--card);border:1px solid var(--line-strong);border-radius:10px;padding:10px 13px;
+    font-family:var(--f-ui);color:var(--text);transition:.14s}
+  .tour-conn:hover{border-color:var(--brand);background:var(--brand-soft);transform:translateX(2px)}
+  .tour-conn.seen{opacity:.62}
+  .tc-dot{flex:none;width:9px;height:9px;border-radius:50%}
+  .tc-name{font-family:var(--f-mono);font-size:13.5px;font-weight:600;color:var(--text)}
+  .tc-via{font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}
+  .tc-ch{margin-left:auto;font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em}
+  .tc-new{flex:none;font-size:11.5px;font-weight:700;color:var(--brand-ink)}
+  .tc-done{flex:none;font-size:11.5px;color:var(--brand)}
+  .tour-conn.pend .tc-ch{margin-left:8px}
+  .tour-conn.pend{margin:0}
+  .tour-pending{margin-top:20px;background:var(--inset);border:1px solid var(--line);
+    border-radius:12px;padding:14px 16px}
+  .tour-pending .tour-conns{margin-top:2px}
+  .tour-pending .tour-conn{background:transparent}
+  /* flow map: active / visited node states */
+  .wnode-active .wn{fill:var(--brand-soft)}
+  .wnode-visited .wn{opacity:.72}
+  .wnode-active{cursor:pointer}
   /* offline syntax highlight tokens (tuned for dark) */
   .tk-kw{color:#c4b5fd;font-weight:600}
   .tk-str{color:#6ee7b7}
@@ -1320,8 +1357,12 @@ function wireCanvasDrag(e,id){
   document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
 }
 
-function renderWiring(w){
+function renderWiring(w, opts){
   if (!w || (w.nodes||[]).length < 2) return '';
+  opts = opts || {};
+  const activeId = opts.activeId || null;
+  const visited = opts.visited instanceof Set ? opts.visited : new Set(opts.visited || []);
+  const tourNav = !!opts.tourNav;
   const id = 'wire' + (++_wireSeq);
   const NW=212, NH=54, COLW=254, ROWV=74, PX=26, PY=28;
 
@@ -1423,13 +1464,17 @@ function renderWiring(w){
     const tipBelow = p.y + NH + 6;
     const tipY = tipBelow + 22 < H ? tipBelow : p.y - 28;
 
-    nodes += '<g class="wnode" data-id="'+esc(n.id)+'"'
-      +' onclick="wireOpenSource(event)" onmouseenter="wireEnter(event)" onmouseleave="wireLeave(event)"'
+    const isActive = activeId && n.id === activeId;
+    const isVisited = visited.has(n.id);
+    const stateCls = (isActive ? ' wnode-active' : '') + (isVisited && !isActive ? ' wnode-visited' : '');
+    nodes += '<g class="wnode'+stateCls+'" data-id="'+esc(n.id)+'"'
+      +' onclick="'+(tourNav?'tourNavFromMap':'wireOpenSource')+'(event)"'
+      +' onmouseenter="wireEnter(event)" onmouseleave="wireLeave(event)"'
       +' style="animation-delay:'+(180+k*45)+'ms">'
       // Card
       +'<rect class="wn" x="'+p.x+'" y="'+p.y+'" width="'+NW+'" height="'+NH+'" rx="10"'
-        +' stroke="'+(p.entry?'var(--brand)':'var(--line-strong)')+'"'
-        +' stroke-width="'+(p.entry?1.6:1)+'"/>'
+        +' stroke="'+(isActive?'var(--brand)':p.entry?'var(--brand)':'var(--line-strong)')+'"'
+        +' stroke-width="'+(isActive?2.4:p.entry?1.6:1)+'"/>'
       // Entry glow strip across top
       +(p.entry
         ? '<rect x="'+(p.x+10)+'" y="'+p.y+'" width="'+(NW-20)+'" height="2" rx="1" fill="var(--brand)" opacity=".6"/>'
@@ -1611,34 +1656,119 @@ function _setOrientActive(id){
   });
 }
 
-/* ---------- guided codebase tour ---------- */
+/* ---------- guided codebase tour — a branching, backtrackable flow explorer --- */
+// Instead of a fixed line of stops, the tour is walked as a GRAPH: each stop
+// advertises the other stops it imports ("uses") and the ones that import it
+// ("used_by"). You pick a connection to follow, and a breadcrumb + Back button
+// let you return to any decision point and take the other path. `visited` drives
+// progress; `history` is the trail you've actually walked.
 let _tour = null;
 async function startTour(){
   if (!activeNs) return toast('Select a repo first', true);
   _setOrientActive('tourBtn');
   const stream = $('#stream');
   stream.innerHTML = '<div class="empty">' + KNOT
-    + '<h2>Building your guided tour…</h2><p>Ordering the codebase into a learning path.</p></div>';
+    + '<h2>Building your guided tour…</h2><p>Mapping how the codebase connects into a walkable flow.</p></div>';
   try {
     const t = await api('/v1/tour/' + encodeURIComponent(activeNs));
-    const stops = [];
-    (t.chapters || []).forEach(ch => (ch.stops || []).forEach(s => stops.push(Object.assign({ chapter: ch.title }, s))));
+    const stops = [], byPath = {}, roleByPath = {};
+    (t.chapters || []).forEach(ch => (ch.stops || []).forEach(s => {
+      const st = Object.assign({ chapter: ch.title }, s);
+      stops.push(st); byPath[s.path] = st;
+    }));
+    ((t.flow_graph && t.flow_graph.nodes) || []).forEach(n => { roleByPath[n.id] = n.role || 'code'; });
     if (!stops.length){ stream.innerHTML = emptyState('Tour unavailable', 'Not enough indexed code to build a tour yet.'); return; }
-    _tour = { data: t, stops: stops, idx: 0 };
+    const entry = (t.entry_point && byPath[t.entry_point]) ? t.entry_point : stops[0].path;
+    _tour = { data: t, stops: stops, byPath: byPath, roleByPath: roleByPath,
+              order: stops.map(s => s.path), cur: entry,
+              history: [entry], visited: new Set([entry]) };
     renderTour();
   } catch (e){ stream.innerHTML = emptyState('Tour failed', e.message); }
 }
 
+function _tourConnBtn(c){
+  const nm = c.path.split('/').pop();
+  const role = _tour.roleByPath[c.path] || 'code';
+  const col = WIRE_COLOR[role] || '#8a9bb0';
+  const seen = _tour.visited.has(c.path);
+  const via = (c.symbols && c.symbols.length)
+    ? '<span class="tc-via">via ' + esc(c.symbols.slice(0, 3).join(', ')) + '</span>' : '';
+  return '<button class="tour-conn' + (seen ? ' seen' : '') + '" data-goto="' + esc(c.path) + '">'
+    + '<span class="tc-dot" style="background:' + col + '"></span>'
+    + '<span class="tc-name">' + esc(nm) + '</span>' + via
+    + (c.chapter ? '<span class="tc-ch">' + esc(c.chapter) + '</span>' : '')
+    + (seen ? '<span class="tc-done">✓ seen</span>' : '<span class="tc-new">explore →</span>')
+    + '</button>';
+}
+
+function _tourPending(){   // connections of already-seen files you haven't opened yet
+  const out = [], seen = new Set();
+  _tour.visited.forEach(vp => {
+    const vs = _tour.byPath[vp]; if (!vs) return;
+    (vs.connections || []).forEach(c => {
+      if (!_tour.visited.has(c.path) && !seen.has(c.path) && c.path !== _tour.cur){
+        seen.add(c.path); out.push({ from: vp, path: c.path });
+      }
+    });
+  });
+  return out;
+}
+
 function renderTour(){
   if (!_tour) return;
-  const t = _tour.data, stops = _tour.stops, i = _tour.idx, s = stops[i];
-  const pct = Math.round(((i + 1) / stops.length) * 100);
+  const t = _tour.data, s = _tour.byPath[_tour.cur];
+  if (!s) return;
+  const total = _tour.stops.length, explored = _tour.visited.size;
+  const pct = Math.round((explored / total) * 100);
+
+  const crumbs = _tour.history.map((p, i) =>
+    '<button class="tour-crumb' + (i === _tour.history.length - 1 ? ' cur' : '') + '" data-jump="' + i + '">'
+    + esc(p.split('/').pop()) + '</button>'
+  ).join('<span class="tour-crumb-sep">›</span>');
+
+  const conns = s.connections || [];
+  const uses = conns.filter(c => c.direction === 'uses');
+  const usedBy = conns.filter(c => c.direction === 'used_by');
+  let branch = '<div class="tour-branch">';
+  if (uses.length){
+    branch += '<div class="tour-branch-h">'
+      + (uses.length > 1 ? 'This file connects to ' + uses.length + ' places — pick a path to follow'
+                         : 'This file leads into') + '</div>'
+      + '<div class="tour-conns">' + uses.map(_tourConnBtn).join('') + '</div>';
+  }
+  if (usedBy.length){
+    branch += '<div class="tour-branch-h up">Reached from ' + usedBy.length + ' place' + (usedBy.length > 1 ? 's' : '') + '</div>'
+      + '<div class="tour-conns">' + usedBy.map(_tourConnBtn).join('') + '</div>';
+  }
+  if (!uses.length && !usedBy.length){
+    branch += '<div class="tour-branch-leaf">🏁 End of this branch — no other tour files connect here. Go back to take another path.</div>';
+  }
+  branch += '</div>';
+
+  const pending = _tourPending();
+  const pendingHtml = pending.length
+    ? '<div class="tour-pending"><div class="tour-map-h">↩ Branches you can still explore ('
+        + pending.length + ')</div><div class="tour-conns">'
+        + pending.map(p => '<button class="tour-conn pend" data-goto="' + esc(p.path) + '">'
+            + '<span class="tc-name">' + esc(p.path.split('/').pop()) + '</span>'
+            + '<span class="tc-ch">from ' + esc(p.from.split('/').pop()) + '</span>'
+            + '<span class="tc-new">go →</span></button>').join('')
+        + '</div></div>'
+    : '';
+
+  const graph = t.flow_graph && (t.flow_graph.nodes || []).length >= 2 ? t.flow_graph : t.wiring;
+  const map = graph
+    ? '<div class="tour-map"><div class="tour-map-h">Flow map · click a file to jump</div>'
+        + renderWiring(graph, { activeId: _tour.cur, visited: _tour.visited, tourNav: true }) + '</div>'
+    : '';
+
   const html = '<div class="tour">'
     + '<div class="tour-h"><div><strong>Guided tour</strong> · ' + esc(t.namespace || activeNs) + '</div>'
       + '<button class="tour-x" onclick="closeTour()">✕ exit tour</button></div>'
     + (t.overview ? '<p class="tour-ov">' + esc(t.overview) + '</p>' : '')
     + '<div class="tour-prog"><span style="width:' + pct + '%"></span></div>'
-    + '<div class="tour-meta">Stop ' + (i + 1) + ' of ' + stops.length + ' · <b>' + esc(s.chapter) + '</b></div>'
+    + '<div class="tour-meta">Explored <b>' + explored + '</b> of ' + total + ' files · <b>' + esc(s.chapter) + '</b></div>'
+    + '<div class="tour-trail">' + crumbs + '</div>'
     + '<div class="tour-stop">'
       + '<div class="tour-file">'
         + (s.is_entry ? '<span class="tour-badge">START HERE</span>' : '')
@@ -1652,24 +1782,48 @@ function renderTour(){
       + (s.note ? '<div class="tour-note"><b>Team note:</b> ' + esc(s.note) + '</div>' : '')
       + '<pre class="tour-code">' + highlight(s.excerpt || '') + '</pre>'
       + '<div class="tour-actions"><button class="pill" onclick="tourAsk()">Ask about this file</button></div>'
+      + branch
     + '</div>'
     + '<div class="tour-nav">'
-      + '<button onclick="tourGo(-1)"' + (i === 0 ? ' disabled' : '') + '>← Prev</button>'
-      + '<button onclick="tourGo(1)"' + (i === stops.length - 1 ? ' disabled' : '') + '>Next →</button>'
+      + '<button data-back' + (_tour.history.length <= 1 ? ' disabled' : '') + '>← Back</button>'
+      + '<button data-next' + (explored >= total ? ' disabled' : '') + '>Next unseen file →</button>'
     + '</div>'
-    + (t.wiring ? '<div class="tour-map"><div class="tour-map-h">How these files connect</div>' + renderWiring(t.wiring) + '</div>' : '')
+    + pendingHtml
+    + map
     + '</div>';
   $('#stream').innerHTML = html;
   $('#stream').scrollTop = 0;
 }
-function tourGo(d){
-  if (!_tour) return;
-  _tour.idx = Math.max(0, Math.min(_tour.stops.length - 1, _tour.idx + d));
+
+function tourGoTo(path){
+  if (!_tour || !_tour.byPath[path] || _tour.cur === path) return;
+  _tour.history.push(path); _tour.cur = path; _tour.visited.add(path);
   renderTour();
+}
+function tourBack(){
+  if (!_tour || _tour.history.length <= 1) return;
+  _tour.history.pop(); _tour.cur = _tour.history[_tour.history.length - 1];
+  renderTour();
+}
+function tourJump(i){
+  if (!_tour || i < 0 || i >= _tour.history.length) return;
+  _tour.history = _tour.history.slice(0, i + 1);
+  _tour.cur = _tour.history[i];
+  renderTour();
+}
+function tourNext(){
+  if (!_tour) return;
+  const next = _tour.order.find(p => !_tour.visited.has(p));
+  if (next) tourGoTo(next);
+}
+function tourNavFromMap(ev){
+  const g = ev.currentTarget;
+  const path = g && g.dataset ? g.dataset.id : null;
+  if (path) tourGoTo(path);
 }
 function tourAsk(){
   if (!_tour) return;
-  const s = _tour.stops[_tour.idx];
+  const s = _tour.byPath[_tour.cur];
   $('#q').value = 'Explain ' + s.path + ' — what does it do and how does it fit into the project?';
   send();
 }
@@ -1925,8 +2079,8 @@ async function send(){
       addCopyButton(card, d.answer);
       if (_tour) {
         card.insertAdjacentHTML('beforeend',
-          '<div class="tour-resume"><button onclick="renderTour()">↩ Back to tour · stop '
-          + (_tour.idx + 1) + ' of ' + _tour.stops.length + '</button></div>');
+          '<div class="tour-resume"><button onclick="renderTour()">↩ Back to tour · '
+          + esc((_tour.cur || '').split('/').pop()) + '</button></div>');
       }
       scrollBottom();
     });
@@ -1943,7 +2097,14 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeFileVie
 // any element tagged data-openfile (tour stop path, walkthrough file chip) opens the full file
 $('#stream').addEventListener('click', e => {
   const el = e.target.closest('[data-openfile]');
-  if (el){ e.preventDefault(); openFileViewer(el.getAttribute('data-openfile')); }
+  if (el){ e.preventDefault(); openFileViewer(el.getAttribute('data-openfile')); return; }
+  // branching-tour navigation (follow a connection / breadcrumb / back / next)
+  const goto = e.target.closest('[data-goto]');
+  if (goto){ e.preventDefault(); tourGoTo(goto.getAttribute('data-goto')); return; }
+  const jump = e.target.closest('[data-jump]');
+  if (jump){ e.preventDefault(); tourJump(+jump.getAttribute('data-jump')); return; }
+  if (e.target.closest('[data-back]')){ e.preventDefault(); tourBack(); return; }
+  if (e.target.closest('[data-next]')){ e.preventDefault(); tourNext(); return; }
 });
 $('#clearBtn').onclick = async () => {
   history = [];

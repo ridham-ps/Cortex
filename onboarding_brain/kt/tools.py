@@ -2,7 +2,7 @@
 
 The LLM receives TOOL_DEFINITIONS and decides which tools to call. Python
 executes exactly what is requested — it makes no decisions about what to
-retrieve or when to stop. This is the core of Level-3 agent behaviour.
+retrieve or when to stop. This is the core of the agent's behaviour.
 
 Tools
 ─────

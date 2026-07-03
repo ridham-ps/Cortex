@@ -22,7 +22,7 @@ Cortex is a production-ready AI agent system for codebase onboarding. Engineers 
           │                                             │
           │           ┌─────────────┐                 │
           │           │  KT Agent   │                 │
-          │           │  (L3 loop)  │                 │
+          │           │ (tool loop) │                 │
           │           └──────┬──────┘                 │
           │                  │                         │
           │  ┌───────────────▼─────────────────────┐ │
@@ -45,15 +45,15 @@ Cortex exposes these specialised agents, each with a fixed scope and a read-only
 
 | Agent | ID | Purpose | Entry point |
 |---|---|---|---|
-| KT Brain | `kt-agent-v1` | Q&A over indexed code (Level-3 loop); separates grounded facts from a labeled "General note (not from the repo)" | `kt/agent_sdk.py` |
+| KT Brain | `kt-agent-v1` | Q&A over indexed code (agentic tool-use loop); separates grounded facts from a labeled "General note (not from the repo)" | `kt/agent_sdk.py` |
 | Guided Tour | `tour` | Ordered file-by-file walk from entry point; each stop carries an LLM one-line insight ("what & why"), cached to `tour.json` | `kt/tour.py` |
 | Project Walkthrough | `walkthrough` | Long-form plain-English deep dive; each section has a "Key takeaways" TL;DR and a "read this next" pointer | `kt/walkthrough.py` |
 | Installation Guide | `installation-guide` | Toolchain prerequisites + run steps | `kt/agents/` |
 | Gap Finder | `gap-finder` | Identifies underdocumented central files | `kt/gaps.py` |
 
-### KT Agent — Level-3 architecture
+### KT Agent — architecture
 
-The KT Agent satisfies every Level-3 criterion: the LLM orchestrates the entire execution; Python is a pure executor.
+The LLM orchestrates the entire execution; Python is a pure executor.
 
 ```
 User question
@@ -147,7 +147,7 @@ grounded guarantee. Grounding, sources, wiring, and traces are assembled by `ass
 call in a worker thread with its own event loop. The single-shot helpers (tour, walkthrough)
 call the same provider's `_complete()`; the install guide reads config files directly (no LLM).
 
-> The diagram above shows the conceptual Level-3 loop. In this codebase the loop itself lives
+> The diagram above shows the conceptual tool-use loop. In this codebase the loop itself lives
 > **inside the SDK**, not in `kt/agent.py` — `kt/agent.py` now only holds the system prompt, tool
 > metadata, and shared response assembly. A deterministic RAG path + `StubProvider` remain in
 > `kt/chat.py`/`evals/` **solely** as the offline test harness; no production backend reaches them.

@@ -315,7 +315,9 @@ async def tour(namespace: str, refresh: bool = False,
     # serve a narrated cache when available (unless the caller forces a refresh)
     if not refresh:
         cached = load_cached_tour(namespace, settings=settings)
-        if cached and cached.get("narrated"):
+        # "flow_graph" key gates the branching-tour schema: caches written before
+        # it existed are treated as stale so the richer tour is regenerated once.
+        if cached and cached.get("narrated") and "flow_graph" in cached:
             try:
                 return JSONResponse(content=TourResponse.model_validate(cached).model_dump(mode="json"))
             except Exception:

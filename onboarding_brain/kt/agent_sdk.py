@@ -1,4 +1,4 @@
-"""Level-3 agent, Claude Agent SDK edition.
+"""Agent, Claude Agent SDK edition.
 
 Same contract as `agent.py` (grounded, tool-using codebase Q&A) but the tool-use
 loop is owned by Anthropic's agent harness instead of being hand-rolled here.

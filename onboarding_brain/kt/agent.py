@@ -1,4 +1,4 @@
-"""Level-3 AI Agent: LLM-orchestrated tool-use loop for codebase Q&A.
+"""LLM-orchestrated tool-use loop for codebase Q&A.
 
 Architecture
 ────────────
@@ -9,16 +9,8 @@ The LLM receives tool definitions and a question. It decides:
   • when to retry with a different query if results are poor
 
 Python is a pure executor — it runs exactly what the LLM requests and returns
-results verbatim. No hardcoded retrieval logic, no forced pipelines.
-
-Level-3 criteria satisfied
-───────────────────────────
-  ✓ LLM understands the goal and plans how to achieve it
-  ✓ LLM dynamically determines next steps via tool calls
-  ✓ LLM selects tools based on task context
-  ✓ LLM evaluates intermediate results, decides if more info is needed
-  ✓ LLM recovers: retries with different queries when first results are poor
-  ✓ LLM orchestrates the entire execution — Python only executes its requests
+results verbatim. No hardcoded retrieval logic, no forced pipelines. The LLM
+orchestrates the entire execution; Python only runs the tools it asks for.
 """
 from __future__ import annotations
 
