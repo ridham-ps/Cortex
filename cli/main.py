@@ -69,6 +69,54 @@ def namespaces():
     typer.echo(json.dumps(get_store(get_settings()).list_namespaces(), indent=2, default=str))
 
 
+@app.command("project-create")
+def project_create(
+    name: str = typer.Argument(..., help="Project name"),
+    repos: list[str] = typer.Argument(..., help="Two or more indexed repo names to link"),
+):
+    """Link 2+ indexed repos into a project for cross-repo debugging."""
+    from onboarding_brain.kt import projects as P
+
+    try:
+        proj = P.create_project(name, list(repos), settings=get_settings())
+    except ValueError as exc:
+        typer.echo(json.dumps({"error": "project_create_failed", "detail": str(exc)}), err=True)
+        raise typer.Exit(code=2)
+    typer.echo(json.dumps(proj, indent=2, ensure_ascii=False, default=str))
+
+
+@app.command()
+def projects():
+    """List cross-repo projects."""
+    from onboarding_brain.kt import projects as P
+    typer.echo(json.dumps(P.list_projects(settings=get_settings()), indent=2, default=str))
+
+
+@app.command()
+def debug(
+    symptom: str = typer.Argument(..., help="The problem/symptom to root-cause"),
+    project: str = typer.Option(..., "--project", "-p", help="Project name/slug to debug"),
+):
+    """Trace a symptom across all repos in a project and report the likely cause."""
+    from onboarding_brain.contract import AskRequest
+    from onboarding_brain.kt import projects as P
+    from onboarding_brain.kt.agent_sdk import agent_debug_sdk
+
+    settings = get_settings()
+    proj = P.get_project(project, settings=settings)
+    if not proj:
+        typer.echo(json.dumps({"error": "project_not_found", "detail": project}), err=True)
+        raise typer.Exit(code=2)
+    try:
+        resp = agent_debug_sdk(
+            AskRequest(namespace=proj["slug"], question=symptom),
+            proj["namespaces"], project_slug=proj["slug"], settings=settings)
+    except (ValueError, TypeError, RuntimeError) as exc:
+        typer.echo(json.dumps({"error": "debug_failed", "detail": str(exc)}), err=True)
+        raise typer.Exit(code=2)
+    typer.echo(json.dumps(resp.model_dump(), indent=2, ensure_ascii=False, default=str))
+
+
 @app.command()
 def info():
     """Print agent + backend configuration."""

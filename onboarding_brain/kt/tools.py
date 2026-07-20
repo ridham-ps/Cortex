@@ -27,6 +27,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .store import VectorStore
 
+# search_code hit-expansion: how many top hits get widened with neighbouring
+# chunks, and the per-hit char ceiling for the stitched result. Tuned so the
+# model reads whole functions instead of truncated 1200-char windows, without
+# blowing the tool-result size.
+_SEARCH_EXPAND_HITS = 6
+_SEARCH_EXPAND_MAX_CHARS = 6000
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Claude-format tool schemas — passed verbatim to the API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,16 +498,55 @@ class ToolExecutor:
                 "or find_files if you know the filename."
             )
         parts = []
-        for r in results:
+        for i, r in enumerate(results):
             m = r.get("metadata", {})
             path = m.get("path", "unknown")
             self.used_paths.add(path)
-            l0, l1 = m.get("line_start", 0), m.get("line_end", 0)
+            # Expand the strongest hits with their neighbouring chunks so the
+            # model reads the WHOLE surrounding function/section, not a 1200-char
+            # window. Weaker hits stay compact to keep the tool result readable.
+            radius = 2 if i < 3 else (1 if i < _SEARCH_EXPAND_HITS else 0)
+            body, l0, l1 = self._expand_hit(r, radius)
             parts.append(
                 f"[{path}:{l0}-{l1}] (relevance {r.get('score', 0):.3f})\n"
-                f"{r.get('text', '').strip()}"
+                f"{body.strip()}"
             )
         return "\n\n---\n\n".join(parts)
+
+    def _expand_hit(self, hit: dict, radius: int) -> tuple[str, int, int]:
+        """Stitch a search hit together with up to `radius` neighbouring chunks
+        on each side of the same file, so the returned code is a coherent unit
+        instead of a truncated slice. Bounded by `_SEARCH_EXPAND_MAX_CHARS`.
+
+        Returns (text, line_start, line_end) covering the widened span.
+        """
+        m = hit.get("metadata", {})
+        path = m.get("path", "")
+        text = hit.get("text", "")
+        l0 = int(m.get("line_start", 0) or 0)
+        l1 = int(m.get("line_end", 0) or 0)
+        if radius <= 0 or "#" not in hit.get("id", "") or not path:
+            return text, l0, l1
+
+        idx = int(m.get("chunk_index", 0) or 0)
+        pieces = [text]
+        budget = _SEARCH_EXPAND_MAX_CHARS - len(text)
+        # walk outward one chunk at a time, alternating below then above, so a
+        # long hit spends its char budget symmetrically around the match
+        step = 1
+        while step <= radius and budget > 0:
+            nxt = self.store.get_chunk(self.namespace, f"{path}#{idx + step}")
+            if nxt and len(nxt.get("text", "")) <= budget:
+                pieces.append(nxt["text"])
+                l1 = int(nxt.get("metadata", {}).get("line_end", l1) or l1)
+                budget -= len(nxt["text"])
+            prev = self.store.get_chunk(self.namespace, f"{path}#{idx - step}") if idx - step >= 0 else None
+            if prev and len(prev.get("text", "")) <= budget:
+                pieces.insert(0, prev["text"])
+                l0 = int(prev.get("metadata", {}).get("line_start", l0) or l0)
+                budget -= len(prev["text"])
+            step += 1
+        return "".join(pieces), l0, l1
 
     def _read_file(self, path: str) -> str:
         result = self.store.full_file(self.namespace, path)
@@ -806,3 +852,118 @@ class ToolExecutor:
         if len(results) > 50:
             lines.append(f"  ... and {len(results) - 50} more")
         return "\n".join(lines)
+
+
+# ── Cross-repo (project) execution ───────────────────────────────────────────
+
+def split_qualified_path(qpath: str, namespaces: list[str]) -> tuple[str | None, str]:
+    """Split a 'namespace/rest' path recorded by MultiRepoExecutor.
+
+    Returns (namespace, rest) when the path is prefixed by one of the project's
+    namespaces, else (None, qpath). Longest namespace wins on ambiguity.
+    """
+    qn = (qpath or "").replace("\\", "/")
+    for ns in sorted(namespaces, key=len, reverse=True):
+        if qn == ns:
+            return ns, ""
+        if qn.startswith(ns + "/"):
+            return ns, qn[len(ns) + 1:]
+    return None, qpath
+
+
+# Tool outputs whose whole body means "nothing here" — suppressed per-repo so a
+# cross-repo block only shows repos that actually matched.
+_EMPTY_PREFIXES = (
+    "No results for", "No files found", "No files indexed", "No dependency files",
+    "Pattern '", "Unknown node type", "Unknown tool",
+)
+
+
+def _looks_empty(out: str) -> bool:
+    s = (out or "").strip()
+    if not s:
+        return True
+    if s.startswith(_EMPTY_PREFIXES):
+        return True
+    if "not found in any indexed file" in s:
+        return True
+    if s.startswith("No ") and s.endswith(("indexed repo.", "found.")):
+        return True
+    return False
+
+
+class MultiRepoExecutor:
+    """Runs the 9 KT tools across several indexed repos at once.
+
+    It owns one plain :class:`ToolExecutor` per namespace and fans each tool call
+    out to all of them, grouping the results under a per-repo header. Every path a
+    child records is re-recorded here qualified as ``<namespace>/<path>`` so the
+    response assembler knows which repo each cited file belongs to.
+
+    Retrieval behaviour is byte-for-byte the single-repo behaviour — this only
+    routes and labels, so the grounding guarantee is unchanged.
+    """
+
+    # read_file / list_symbols are routed to the repo that has the file rather
+    # than fanned out (fan-out would spam "not found" from the other repos).
+    _ROUTED = {"read_file", "list_symbols"}
+
+    def __init__(self, namespaces: list[str], store: "VectorStore") -> None:
+        self.namespaces = list(namespaces)
+        self.store = store
+        self.children: dict[str, ToolExecutor] = {
+            ns: ToolExecutor(ns, store) for ns in self.namespaces
+        }
+        self.used_paths: set[str] = set()
+        self.call_log: list[dict[str, Any]] = []
+
+    def _drain(self, ns: str, child: ToolExecutor) -> None:
+        """Move a child's freshly-recorded paths into ours, qualified by repo."""
+        for p in child.used_paths:
+            self.used_paths.add(f"{ns}/{p}")
+        child.used_paths.clear()
+
+    def execute(self, tool_name: str, tool_input: dict) -> str:
+        self.call_log.append({"tool": tool_name, "input": tool_input})
+        try:
+            if tool_name in self._ROUTED:
+                return self._routed(tool_name, dict(tool_input))
+            return self._fanout(tool_name, dict(tool_input))
+        except Exception as exc:  # noqa: BLE001
+            return f"Tool error ({tool_name}): {exc}"
+
+    def _fanout(self, tool_name: str, tool_input: dict) -> str:
+        blocks: list[str] = []
+        for ns in self.namespaces:
+            child = self.children[ns]
+            out = child.execute(tool_name, dict(tool_input))
+            self._drain(ns, child)
+            if not _looks_empty(out):
+                blocks.append(f"### repo: {ns}\n{out}")
+        if not blocks:
+            return (
+                f"No results in any connected repo ({', '.join(self.namespaces)}). "
+                "Try a broader search term or a different tool."
+            )
+        return "\n\n".join(blocks)
+
+    def _routed(self, tool_name: str, tool_input: dict) -> str:
+        """Send read_file / list_symbols to the repo that owns the path.
+
+        The path may be qualified ('web/src/app.ts') to target one repo, or bare
+        ('src/app.ts') in which case each repo is tried until one resolves.
+        """
+        raw = str(tool_input.get("path", ""))
+        ns, rest = split_qualified_path(raw, self.namespaces)
+        targets = [ns] if ns else self.namespaces
+        lookup = rest if ns else raw
+        for t in targets:
+            child = self.children[t]
+            out = child.execute(tool_name, {**tool_input, "path": lookup})
+            self._drain(t, child)
+            if "not found" not in out.lower():
+                return f"### repo: {t}\n{out}"
+        return (
+            f"File '{raw}' not found in any connected repo "
+            f"({', '.join(self.namespaces)}). Try find_files first."
+        )

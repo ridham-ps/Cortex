@@ -19,7 +19,7 @@ except Exception:
     _HAVE = False
 
 pytestmark = pytest.mark.skipif(not _HAVE, reason="fastapi not installed")
-from tests.fixtures import NODE_REPO, make_repo  # noqa: E402
+from tests.fixtures import NODE_REPO, PY_REPO, make_repo  # noqa: E402
 
 AUTH = {"Authorization": "Bearer test-key"}
 AGENT = "installation-guide"
@@ -174,3 +174,67 @@ def test_chat_history_endpoints():
         assert client.get("/v1/chat/histapi", headers=AUTH).json()["turns"] == []
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+def _ingest_two_repos():
+    web, api = make_repo(NODE_REPO), make_repo(PY_REPO)
+    client.post("/v1/ingest", json={"repo_path": str(web), "namespace": "projweb", "rebuild": True}, headers=AUTH)
+    client.post("/v1/ingest", json={"repo_path": str(api), "namespace": "projapi", "rebuild": True}, headers=AUTH)
+    return web, api
+
+
+def test_project_crud_endpoints():
+    web, api = _ingest_two_repos()
+    try:
+        r = client.post("/v1/projects", json={"name": "Proj X", "namespaces": ["projweb", "projapi"]}, headers=AUTH)
+        assert r.status_code == 200
+        slug = r.json()["slug"]
+        assert set(r.json()["namespaces"]) == {"projweb", "projapi"}
+
+        assert any(p["slug"] == slug for p in client.get("/v1/projects", headers=AUTH).json()["projects"])
+        assert client.get(f"/v1/projects/{slug}", headers=AUTH).json()["name"] == "Proj X"
+
+        # a project needs >= 2 indexed repos
+        assert client.post("/v1/projects", json={"name": "Solo", "namespaces": ["projweb"]}, headers=AUTH).status_code == 400
+        # unknown project
+        assert client.get("/v1/projects/does-not-exist", headers=AUTH).status_code == 404
+
+        assert client.delete(f"/v1/projects/{slug}", headers=AUTH).json()["deleted"] == slug
+        assert client.get(f"/v1/projects/{slug}", headers=AUTH).status_code == 404
+    finally:
+        shutil.rmtree(web, ignore_errors=True)
+        shutil.rmtree(api, ignore_errors=True)
+
+
+def test_debug_endpoint_unknown_project_404():
+    assert client.post("/v1/debug/nope-nope", json={"question": "why 500?"}, headers=AUTH).status_code == 404
+
+
+def test_debug_endpoint_returns_grounded_answer(monkeypatch):
+    """The endpoint wiring is tested with a stubbed debug agent (no live LLM)."""
+    from onboarding_brain.contract import AskResponse, Source, Trace
+    import onboarding_brain.kt.agent_sdk as A
+
+    web, api = _ingest_two_repos()
+    try:
+        slug = client.post("/v1/projects", json={"name": "Dbg", "namespaces": ["projweb", "projapi"]}, headers=AUTH).json()["slug"]
+
+        def _fake_debug(ask_req, namespaces, *, project_slug, settings, event_callback=None):
+            assert set(namespaces) == {"projweb", "projapi"}
+            return AskResponse(
+                answer="Likely cause: the API rejects the payload. See projapi/pipeline/run.py.",
+                sources=[Source(path="pipeline/run.py", repo="projapi", used=True)],
+                grounded=True,
+                trace=Trace(trace_id="tr_test", agent_id="kt-debug-v1",
+                            model_used="stub", duration_ms=1, strategy="debug"),
+            )
+
+        monkeypatch.setattr(A, "agent_debug_sdk", _fake_debug)
+        r = client.post(f"/v1/debug/{slug}", json={"question": "why does it fail?"}, headers=AUTH)
+        assert r.status_code == 200
+        body = r.json()
+        assert "cause" in body["answer"].lower()
+        assert body["sources"][0]["repo"] == "projapi"
+    finally:
+        shutil.rmtree(web, ignore_errors=True)
+        shutil.rmtree(api, ignore_errors=True)

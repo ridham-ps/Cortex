@@ -73,6 +73,28 @@ Agents are strictly read-only. They cannot modify files, run commands, apply pat
 
 ---
 
+### Model-fallback budget is approximate
+The subscription's real usage quota is **not** exposed to the app. The proactive budget
+(`ONBOARDING_SOFT_BUDGET_PER_WINDOW`) is therefore a **local, per-process** rolling-window count
+of requests — not the account-wide quota, not token-accurate, and not shared across instances.
+
+**Impact**: On a restart the counter resets; with multiple instances each counts only its own
+traffic. It can downgrade too early or too late relative to your actual quota.  
+**Mitigation now**: The **reactive ladder** (`CLAUDE_SDK_FALLBACKS`) is the accurate safety net —
+it fires on the real limit error regardless of the estimate.  
+**Future hardening**: Token-based accounting; a shared (Redis) counter for multi-node.
+
+---
+
+### Cross-repo debug has no combined wiring diagram yet
+Cross-repo debug answers show per-repo grouped, colour-tagged sources and a "repos involved"
+row, but not a single front→back graph spanning the repos (single-repo answers still get their
+wiring diagram).
+
+**Future hardening**: Build a combined cross-repo flow graph (match UI calls to backend routes).
+
+---
+
 ## Deployment checklist
 
 Before putting Cortex on a shared or networked server:
@@ -94,7 +116,7 @@ Before putting Cortex on a shared or networked server:
 | Auth | Per-namespace ACLs, OAuth/SSO |
 | Scale | Redis rate limiter, S3-backed index |
 | Evals | LLM-as-judge pipeline on real repos, eval dashboard |
-| Agents | Cross-repo Q&A (multiple namespaces in one answer) |
+| Agents | ✅ Cross-repo debugging (projects) — shipped; next: combined cross-repo wiring graph |
 | Tooling | PR diff agent ("what changed and why?") |
 | Tooling | Annotation suggestions ("this function needs a doc comment") |
 | UI | Mobile-friendly layout, PDF export for walkthrough |

@@ -77,6 +77,7 @@ class Source(BaseModel):
     snippet: str = ""
     symbol: str = ""    # enclosing def/class/heading the chunk starts at
     used: bool = False  # the answer actually cited this snippet (vs. merely retrieved)
+    repo: str | None = None  # which indexed repo this came from (cross-repo debug only)
 
 
 class AskResponse(BaseModel):
@@ -88,6 +89,30 @@ class AskResponse(BaseModel):
     validation_status: Literal["passed", "warning", "failed"] = "passed"
     wiring: dict[str, Any] | None = None  # how the cited files connect (for the diagram)
     trace: Trace
+
+
+# ── Cross-repo projects (link several ingested repos for root-cause debugging) ──
+
+class ProjectCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    namespaces: list[str] = Field(default_factory=list)  # >= 2 indexed repos
+
+
+class ProjectResponse(BaseModel):
+    slug: str
+    name: str
+    namespaces: list[str] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class DebugRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str                                        # the symptom to debug
+    history: list[ChatTurn] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

@@ -44,6 +44,23 @@ Exit code `0` = gate passed. Exit code `1` = one or more cases failed (blocks CI
 
 Each case builds a **throwaway fixture repo in memory** — no real git clone, no embedding model download, no LLM call required. Tests are fully hermetic and run in seconds.
 
+### Cross-repo debug & model fallback (pytest, not the LLM gate)
+
+Two newer features are verified in the **pytest** suite rather than the LLM gate, because one
+needs the live SDK to generate prose and the other is pure deterministic logic:
+
+- **Cross-repo debug** (`tests/test_projects.py`) — project CRUD/validation, the
+  `MultiRepoExecutor` fan-out and `namespace/path` qualification, routed `read_file`, repo-tagged
+  sources, and a **planted-bug** case proving cross-repo search reaches the culprit file in the
+  *other* repo. `tests/test_api.py` covers the `/v1/projects` and `/v1/debug` endpoints (the debug
+  endpoint with a stubbed agent, so no live LLM is needed).
+- **Model fallback** (`tests/test_model_policy.py`) — ladder construction, retryable-vs-real-error
+  detection, the rolling-window budget → proactive downgrade, and the `run_with_fallback`
+  orchestration (downgrade on a limit, stay put on a real bug, start on the fast model over budget).
+
+The debug agent's *narrative* quality (like chat's) is best measured on real repos via the
+LLM-as-judge rubric below, since the deterministic gate can't run the live SDK loop.
+
 ### How it stays deterministic — the stub provider
 
 A real LLM phrases answers differently every run, so exact-match checks can only pass against a deterministic generator. The gate uses a **stub provider** (`evals/stub_provider.py`) — a test double that produces grounded, repeatable output purely from the repo context (it only cites files that exist and says "not found in repo" when data is absent).

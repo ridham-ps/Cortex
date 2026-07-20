@@ -45,6 +45,27 @@ class Settings:
     claude_sdk_model: str = field(default_factory=lambda: os.getenv("CLAUDE_SDK_MODEL", ""))
     claude_sdk_oauth_token: str = field(default_factory=lambda: os.getenv("CLAUDE_CODE_OAUTH_TOKEN", ""))
 
+    # --- Model fallback (resilience under subscription limits) ---
+    # Cheaper models to fall back to, in order, when the primary model hits a
+    # retryable limit (rate limit / usage cap / overloaded). Comma-separated
+    # model ids, e.g. "claude-sonnet-5,claude-haiku-4-5-20251001". Empty = no
+    # ladder (a limit just degrades to an honest failure, the old behaviour).
+    claude_sdk_fallbacks: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            m.strip() for m in os.getenv("CLAUDE_SDK_FALLBACKS", "").split(",") if m.strip()
+        )
+    )
+    # Proactive budget routing. The subscription's real quota is NOT exposed to the
+    # app, so this is a LOCAL, per-process approximation: count agent requests in a
+    # rolling window and, once usage crosses `budget_downgrade_at`, pre-emptively
+    # route to the fast model until the window resets. 0 = disabled (default).
+    soft_budget_per_window: int = field(default_factory=lambda: _int("ONBOARDING_SOFT_BUDGET_PER_WINDOW", 0))
+    budget_window_s: int = field(default_factory=lambda: _int("ONBOARDING_BUDGET_WINDOW_S", 5 * 3600))
+    budget_downgrade_at: float = field(default_factory=lambda: _float("ONBOARDING_BUDGET_DOWNGRADE_AT", 0.8))
+    # Model used once the soft budget is crossed. Empty = the cheapest model in the
+    # ladder (the last fallback), else the primary model.
+    budget_fast_model: str = field(default_factory=lambda: os.getenv("ONBOARDING_BUDGET_FAST_MODEL", ""))
+
     # When True (default, local single-user setup), a tokenless clone of a
     # private repo lets Git Credential Manager pop a browser for OAuth. On a
     # HEADLESS server set this False so a tokenless private clone fails fast

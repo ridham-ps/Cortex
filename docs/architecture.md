@@ -50,6 +50,7 @@ Cortex exposes these specialised agents, each with a fixed scope and a read-only
 | Project Walkthrough | `walkthrough` | Long-form plain-English deep dive; each section has a "Key takeaways" TL;DR and a "read this next" pointer | `kt/walkthrough.py` |
 | Installation Guide | `installation-guide` | Toolchain prerequisites + run steps | `kt/agents/` |
 | Gap Finder | `gap-finder` | Identifies underdocumented central files | `kt/gaps.py` |
+| Cross-repo Debug | `kt-debug-v1` | Root-cause analysis across a **project** (2+ linked repos); same 9 tools fanned out over every repo, sources tagged by repo | `kt/agent_sdk.py` (`agent_debug_sdk`) |
 
 ### KT Agent — architecture
 
@@ -95,6 +96,32 @@ User question
 | `call_graph` | Callers + callees of a function (grep-based) |
 | `run_grep_ast` | Find all classes, routes, components, decorators, exports |
 
+### Cross-repo debugging (projects)
+
+A **project** links two or more indexed repos into one debuggable unit (a JSON registry at
+`.kt_index/projects.json`, managed by [`kt/projects.py`](../onboarding_brain/kt/projects.py)).
+The debug agent (`agent_debug_sdk`) runs the **same** SDK loop and the **same** 9 tools, but the
+executor is a `MultiRepoExecutor` ([`kt/tools.py`](../onboarding_brain/kt/tools.py)) that fans each
+tool call out across every repo in the project and **qualifies every path as `namespace/path`**.
+So retrieval behaviour is byte-for-byte identical to single-repo — it only routes and labels.
+
+```
+POST /v1/debug/{project} (symptom)
+        │
+        ▼
+  MultiRepoExecutor: each tool searches ALL repos; results grouped "### repo: <name>"
+        │
+        ▼
+  DEBUG_SYSTEM_PROMPT: hypotheses → trace the flow across repos → name the cause
+        │
+        ▼
+  assemble_debug_response(): sources tagged with `repo`, persisted to per-project history
+```
+
+Sources carry a `repo` field so the UI groups and colours them by repository. The conversation
+is stored under the project slug and restores exactly like a normal repo chat. No cross-repo
+wiring diagram yet (v1 shows per-repo grouped sources instead).
+
 ## Data flow — ingest → answer
 
 ```
@@ -126,6 +153,9 @@ User question
     tour.json          — cached guided tour
     walkthrough.json   — cached project walkthrough
     chat_history.json  — per-namespace conversation history (or MongoDB)
+  <project-slug>/
+    chat_history.json  — per-project cross-repo debug history
+  projects.json        — cross-repo project registry (name → [namespaces])
 
 trace.json             — JSONL append-only structured event log
 ```
@@ -151,6 +181,24 @@ call the same provider's `_complete()`; the install guide reads config files dir
 > **inside the SDK**, not in `kt/agent.py` — `kt/agent.py` now only holds the system prompt, tool
 > metadata, and shared response assembly. A deterministic RAG path + `StubProvider` remain in
 > `kt/chat.py`/`evals/` **solely** as the offline test harness; no production backend reaches them.
+
+### Model fallback (resilience under subscription limits)
+
+The subscription's real quota is not exposed to the app, so Cortex cannot read a usage
+percentage. [`kt/model_policy.py`](../onboarding_brain/kt/model_policy.py) provides two opt-in
+mechanisms instead, and both `agent_ask_sdk` and `agent_debug_sdk` run through `run_with_fallback()`:
+
+- **Reactive ladder** (`CLAUDE_SDK_FALLBACKS`) — a run that fails with a *retryable* limit
+  (rate limit / usage cap / overloaded / transient 5xx / timeout, matched by `is_retryable_limit`)
+  is retried on the next cheaper model. A real bug never triggers a downgrade.
+- **Proactive budget** (`ONBOARDING_SOFT_BUDGET_PER_WINDOW`) — an in-process rolling-window
+  request counter; once usage crosses `ONBOARDING_BUDGET_DOWNGRADE_AT` (default 0.8) new runs
+  start on the fast model until the window resets. This is a **local approximation**, not the
+  account-wide quota.
+
+The model that actually answered is threaded into `Trace.model_used` via `model_used_override`,
+so a downgraded answer is labelled honestly (e.g. `claude_sdk/claude-haiku-4-5-20251001`). Both
+mechanisms are off by default; with nothing configured the behaviour is unchanged.
 
 ## Security model
 

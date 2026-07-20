@@ -136,6 +136,11 @@ If you prefer the command line:
 .\.venv\Scripts\python.exe -m cli.main ask "How is login handled?" -n myrepo     # ask a question
 .\.venv\Scripts\python.exe -m cli.main namespaces                                # list repos you've read
 .\.venv\Scripts\python.exe -m cli.main info                                      # show current settings
+
+# Cross-repo debugging: link 2+ indexed repos, then trace a problem across them
+.\.venv\Scripts\python.exe -m cli.main project-create "Acme app" acme-web acme-api
+.\.venv\Scripts\python.exe -m cli.main projects                                  # list projects
+.\.venv\Scripts\python.exe -m cli.main debug "login returns 500" -p acme-app     # find the cause
 ```
 
 Every command prints its result as JSON, so it's easy to use in scripts.
@@ -177,6 +182,8 @@ The main endpoints:
 | `GET /v1/tour/{repo}` | Get the guided tour |
 | `POST/GET /v1/walkthrough/{repo}` | Start / fetch the full project walkthrough |
 | `GET /v1/gaps/{repo}` | See which files are confusing and worth documenting |
+| `POST/GET/DELETE /v1/projects` | Create / list / delete a cross-repo project (a named group of repos) |
+| `POST /v1/debug/{project}` | Trace a problem across every repo in a project, get the likely cause |
 | `POST /v1/agents/{id}/run` | Run a specific helper (install-guide) |
 | `GET /v1/namespaces`, `GET /v1/agents`, `GET /health` | List repos, list helpers, health check |
 
@@ -200,8 +207,13 @@ Cortex is really a few small, focused helpers ("agents") that share the same bra
   with a "Key takeaways" summary and a "read this next" pointer on every section.
 - **Gap finder** — points out the files that are central but hard to understand, so the
   team can write down what they're for.
+- **Cross-repo debug** (`kt-debug-v1`) — link two or more indexed repos into a **project**
+  (say a frontend and its backend), describe a symptom, and it traces the problem across all
+  of them — front to back — and names the likely cause with `repo → file:line` citations.
+  It runs in the normal chat and is saved to history like any other conversation.
 
-Each helper sticks to its job and only talks about the repo you gave it.
+Each helper sticks to its job. Ordinary chat, tours, and walkthroughs talk only about the
+one repo you gave them; cross-repo debug talks only about the repos in the project you built.
 
 ---
 
@@ -245,6 +257,9 @@ Everything is controlled by environment variables, with safe defaults so it just
 |---|---|---|---|
 | The agent | `ONBOARDING_LLM_BACKEND` | `claude_sdk` (only) | `claude_sdk` |
 | Agent model | `CLAUDE_SDK_MODEL` | blank (subscription default) or a model id | blank |
+| Model fallbacks | `CLAUDE_SDK_FALLBACKS` | comma-separated cheaper model ids | blank (no ladder) |
+| Soft budget (approx) | `ONBOARDING_SOFT_BUDGET_PER_WINDOW` | requests per window before downgrading | `0` (off) |
+| Downgrade threshold | `ONBOARDING_BUDGET_DOWNGRADE_AT` | fraction of the budget (e.g. `0.8`) | `0.8` |
 | How it searches | `ONBOARDING_VECTOR_BACKEND` | `tfidf` (fast), `dense`, `hybrid` (smartest) | `tfidf` |
 | Where chat history lives | `ONBOARDING_CHAT_STORE` | `auto`, `json`, `mongo` | `auto` |
 | API keys | `ONBOARDING_API_KEYS` | comma-separated keys | `dev-local-key` |
@@ -254,11 +269,28 @@ Everything is controlled by environment variables, with safe defaults so it just
 Cortex runs on the **Claude Agent SDK** ([claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/)).
 The SDK runs the tool-use loop; Cortex provides its 9 code-aware tools as an in-process MCP server,
 restricted to read-only access over the indexed code (no filesystem or shell access). Chat,
-chat, install guide, tour, and walkthrough all use this backend.
+cross-repo debug, install guide, tour, and walkthrough all use this backend.
 
 It authenticates with your **Claude Pro/Max subscription over OAuth** — see
 [Authentication](#authentication--how-the-claude-login-works) above. Leave `CLAUDE_SDK_MODEL`
 blank to use the subscription's default model, or set a specific model id.
+
+### Staying up under subscription limits (model fallback)
+
+The subscription's real usage quota isn't exposed to the app, so Cortex can't read a "you're
+at 80%" number. Instead it stays resilient two ways:
+
+- **Reactive ladder** — set `CLAUDE_SDK_FALLBACKS` to a list of cheaper models (e.g.
+  `claude-sonnet-5,claude-haiku-4-5-20251001`). When a run hits a *retryable* limit (rate
+  limit, usage cap, overloaded, transient 5xx), it automatically retries on the next model
+  down. A real bug never triggers a downgrade.
+- **Proactive budget** — set `ONBOARDING_SOFT_BUDGET_PER_WINDOW` to a request count and Cortex
+  keeps a **local, per-process** rolling-window count; once it crosses
+  `ONBOARDING_BUDGET_DOWNGRADE_AT` (default 80%) it pre-emptively uses the fast model until the
+  window resets. This is an approximation, not the account-wide quota.
+
+When an answer is produced on a downgraded model, its model chip honestly shows which model
+answered (e.g. `claude_sdk/claude-haiku-4-5-20251001`). Both mechanisms are **off by default**.
 
 ---
 

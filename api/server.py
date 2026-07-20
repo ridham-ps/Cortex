@@ -292,6 +292,160 @@ async def ask_stream_endpoint(request: Request, _: str = Depends(require_auth)):
     )
 
 
+# ── Cross-repo projects & root-cause debugging ───────────────────────────────
+
+@app.get("/v1/projects")
+async def projects_list(_: str = Depends(require_auth)) -> dict[str, Any]:
+    from onboarding_brain.kt import projects as P
+    return {"projects": P.list_projects(settings=get_settings())}
+
+
+@app.post("/v1/projects")
+async def projects_create(request: Request, _: str = Depends(require_auth)) -> JSONResponse:
+    from onboarding_brain.contract import ProjectCreateRequest
+    from onboarding_brain.kt import projects as P
+    settings = get_settings()
+    body = _parse_body(await request.body(), ProjectCreateRequest, settings.max_request_bytes)
+    try:
+        proj = await run_in_threadpool(
+            P.create_project, body.name, body.namespaces, settings=settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(content=proj)
+
+
+@app.get("/v1/projects/{slug}")
+async def projects_get(slug: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+    from onboarding_brain.kt import projects as P
+    proj = P.get_project(slug, settings=get_settings())
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"project not found: {slug}")
+    return proj
+
+
+@app.post("/v1/projects/{slug}/repos")
+async def projects_set_repos(slug: str, request: Request,
+                             _: str = Depends(require_auth)) -> JSONResponse:
+    from onboarding_brain.contract import ProjectCreateRequest
+    from onboarding_brain.kt import projects as P
+    settings = get_settings()
+    body = _parse_body(await request.body(), ProjectCreateRequest, settings.max_request_bytes)
+    try:
+        proj = await run_in_threadpool(
+            P.set_project_repos, slug, body.namespaces, settings=settings)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"project not found: {slug}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(content=proj)
+
+
+@app.delete("/v1/projects/{slug}")
+async def projects_delete(slug: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+    from onboarding_brain.kt import projects as P
+    removed = await run_in_threadpool(P.delete_project, slug, settings=get_settings())
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"project not found: {slug}")
+    return {"deleted": slug}
+
+
+def _project_or_404(slug: str, settings):
+    from onboarding_brain.kt import projects as P
+    proj = P.get_project(slug, settings=settings)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"project not found: {slug}")
+    return proj
+
+
+@app.post("/v1/debug/{slug}")
+async def debug_endpoint(slug: str, request: Request,
+                         _: str = Depends(require_auth)) -> JSONResponse:
+    """Root-cause debugging across every repo in a project."""
+    from onboarding_brain.contract import AskRequest, DebugRequest
+    from onboarding_brain.kt.agent_sdk import agent_debug_sdk
+    settings = get_settings()
+    body = _parse_body(await request.body(), DebugRequest, settings.max_request_bytes)
+    proj = _project_or_404(slug, settings)
+    ask_req = AskRequest(namespace=proj["slug"], question=body.question, history=body.history)
+    try:
+        resp = await run_in_threadpool(
+            agent_debug_sdk, ask_req, proj["namespaces"],
+            project_slug=proj["slug"], settings=settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except (RuntimeError, TypeError, ImportError, ModuleNotFoundError) as exc:
+        raise HTTPException(status_code=503, detail=f"LLM backend unavailable: {exc}")
+    return JSONResponse(content=resp.model_dump(mode="json"))
+
+
+@app.post("/v1/debug/{slug}/stream")
+async def debug_stream_endpoint(slug: str, request: Request,
+                                _: str = Depends(require_auth)) -> StreamingResponse:
+    """SSE variant of /v1/debug — streams tool-call progress then the final answer."""
+    from onboarding_brain.contract import AskRequest, DebugRequest
+    from onboarding_brain.kt.agent_sdk import agent_debug_sdk
+    settings = get_settings()
+    body = _parse_body(await request.body(), DebugRequest, settings.max_request_bytes)
+    proj = _project_or_404(slug, settings)
+    ask_req = AskRequest(namespace=proj["slug"], question=body.question, history=body.history)
+
+    event_queue: Queue = Queue()
+    result_holder: dict = {}
+
+    def _run() -> None:
+        try:
+            resp = agent_debug_sdk(
+                ask_req, proj["namespaces"], project_slug=proj["slug"],
+                settings=settings, event_callback=lambda e: event_queue.put(e))
+            result_holder["resp"] = resp
+        except ValueError as exc:
+            result_holder["err"] = {"code": 400, "message": str(exc)}
+        except (RuntimeError, TypeError, ImportError, ModuleNotFoundError) as exc:
+            result_holder["err"] = {"code": 503, "message": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            result_holder["err"] = {"code": 500, "message": str(exc)}
+        finally:
+            event_queue.put({"type": "_done_sentinel"})
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+
+    async def _generate():
+        ping = 0
+        while True:
+            await asyncio.sleep(0.04)
+            ping += 1
+            drained = False
+            while True:
+                try:
+                    ev = event_queue.get_nowait()
+                except Empty:
+                    break
+                if ev.get("type") == "_done_sentinel":
+                    err = result_holder.get("err")
+                    if err:
+                        yield f"data: {json.dumps({'type': 'error', **err})}\n\n"
+                    else:
+                        resp = result_holder.get("resp")
+                        if resp:
+                            payload = resp.model_dump(mode="json")
+                            payload["type"] = "done"
+                            yield f"data: {json.dumps(payload)}\n\n"
+                    worker.join(timeout=2)
+                    return
+                yield f"data: {json.dumps(ev)}\n\n"
+                drained = True
+            if not drained and ping % 50 == 0:
+                yield ": ping\n\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
+    )
+
+
 @app.get("/v1/gaps/{namespace}")
 async def gaps(namespace: str, _: str = Depends(require_auth)) -> dict[str, Any]:
     from onboarding_brain.kt.knowledge import detect_gaps

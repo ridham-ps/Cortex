@@ -406,7 +406,7 @@
   .openfile{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}
   .openfile:hover{color:var(--brand-ink)}
   /* full-file viewer modal */
-  .fv-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;display:none;
+  .fv-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:70;display:none;
     align-items:center;justify-content:center;padding:24px}
   .fv-overlay.open{display:flex}
   .fv-modal{background:var(--card);border:1px solid var(--line-strong);border-radius:18px;
@@ -541,20 +541,59 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     animation:tlfade .25s ease}
 
+  /* ---------- cross-repo projects (sidebar + inline) ---------- */
+  .sec-h .proj-add{float:right;background:none;border:1px solid var(--line-strong);color:var(--muted);
+    font-size:11px;border-radius:7px;padding:2px 8px;cursor:pointer;font-family:var(--f-ui)}
+  .sec-h .proj-add:hover{border-color:var(--brand);color:var(--brand-ink)}
+  .proj-form{border:1px solid var(--line);border-radius:11px;padding:12px;margin-bottom:10px;background:var(--card)}
+  .proj-form-actions{display:flex;gap:8px;margin-top:12px}
+  .dbg-label{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .repo-picker{display:flex;flex-wrap:wrap;gap:6px}
+  .repo-check{display:flex;align-items:center;gap:6px;border:1px solid var(--line-strong);border-radius:8px;
+    padding:5px 9px;font-size:12px;cursor:pointer;background:var(--bg-2);color:var(--text);user-select:none}
+  .repo-check input{accent-color:var(--brand);margin:0}
+  .repo-check.on{border-color:var(--brand);background:var(--brand-ring)}
+  .dbg-name{width:100%;padding:9px 11px;border:1px solid var(--line-strong);border-radius:9px;
+    background:var(--bg-2);color:var(--text);font-family:var(--f-ui);font-size:13px}
+  .dbg-name:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring)}
+  .dbg-btn{padding:9px 15px;border-radius:9px;border:none;background:var(--brand);color:#fff;
+    font-weight:600;cursor:pointer;font-size:13px}
+  .dbg-btn:hover{filter:brightness(1.06)}
+  .dbg-btn.ghost{background:transparent;border:1px solid var(--line-strong);color:var(--text)}
+  .dbg-btn.sm{padding:7px 13px;font-size:12.5px}
+  .dbg-btn:disabled{opacity:.5;cursor:not-allowed}
+  .proj-row{display:flex;align-items:center;gap:10px;border:1px solid transparent;border-radius:10px;
+    padding:9px 11px;cursor:pointer}
+  .proj-row:hover{background:var(--card)}
+  .proj-row.active{background:var(--card);border-color:var(--brand)}
+  .proj-row .pic{color:var(--brand-ink);font-size:14px;flex:none}
+  .proj-row .pn{font-weight:600;color:var(--text);font-size:13px}
+  .proj-row .pr{color:var(--faint);font-size:11px;font-family:var(--f-mono);margin-top:2px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .proj-row .del{margin-left:auto;color:var(--muted);background:none;border:none;cursor:pointer;font-size:13px;padding:2px 5px;opacity:0}
+  .proj-row:hover .del{opacity:1}
+  .proj-row .del:hover{color:var(--bad)}
+  /* per-repo source tags shown inside normal chat source cards */
+  .repo-tag{display:inline-flex;align-items:center;font-size:10px;font-family:var(--f-mono);
+    padding:1px 7px;border-radius:5px;font-weight:600;color:#fff;letter-spacing:.02em}
+  .repos-involved{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0 2px}
+  .repos-involved .lbl{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+
   /* ---------- composer ---------- */
   .composer{flex:none;padding:16px 36px 20px;border-top:1px solid var(--line);background:var(--bg-2)}
-  .composer-inner{max-width:780px;margin:0 auto;display:flex;gap:10px;position:relative}
-  .composer input{
+  .composer-inner{max-width:780px;margin:0 auto;display:flex;gap:10px;position:relative;align-items:flex-end}
+  .composer textarea{
     flex:1;padding:13px 16px 13px 40px;font-size:14px;border-radius:11px;
-    font-family:var(--f-ui);font-weight:500;
-    background:var(--card);border-color:var(--line-strong);color:var(--text);
+    font-family:var(--f-ui);font-weight:500;line-height:1.5;
+    background:var(--card);border:1px solid var(--line-strong);color:var(--text);
+    resize:none;min-height:48px;max-height:180px;overflow-y:auto;
   }
-  .composer input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring)}
+  .composer textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring);outline:none}
   .composer .ps1{
-    position:absolute; left:15px; top:50%; transform:translateY(-50%);
+    position:absolute; left:15px; top:24px; transform:translateY(-50%);
     color:var(--muted); display:grid;place-items:center;font-size:17px;font-weight:400;pointer-events:none;
   }
-  .composer .btn{padding:0 26px;border-radius:11px}
+  .composer .btn{padding:0 26px;border-radius:11px;align-self:flex-end}
   .hint{
     max-width:780px;margin:8px auto 0;font-size:11.5px;color:var(--faint);
     display:flex;gap:18px;font-weight:500;
@@ -805,7 +844,7 @@
   [data-theme="light"] .user-bubble{border-radius:18px !important;border-bottom-right-radius:8px !important}
   [data-theme="light"] .bot-av,[data-theme="light"] .user-av{border-radius:12px}
   [data-theme="light"] input{border-radius:12px !important}
-  [data-theme="light"] .composer input{border-radius:14px !important}
+  [data-theme="light"] .composer textarea{border-radius:14px !important}
   [data-theme="light"] .composer .btn{border-radius:14px !important}
   [data-theme="light"] .gap{border-radius:16px !important}
   [data-theme="light"] .bar-toggle{border-radius:12px !important}
@@ -885,6 +924,21 @@
         </button>
       </div>
     </div>
+    <div class="sec" id="projSec" style="display:none">
+      <div class="sec-h">Cross-repo debug
+        <button id="newProjBtn" class="proj-add" title="New project" onclick="toggleProjForm()">＋ New</button>
+      </div>
+      <div id="projForm" class="proj-form" style="display:none">
+        <input class="dbg-name" id="projName" placeholder="Project name (e.g. Acme app)">
+        <div class="dbg-label" style="margin:10px 0 6px">Link 2+ repos</div>
+        <div class="repo-picker" id="projRepos"></div>
+        <div class="proj-form-actions">
+          <button class="dbg-btn sm" onclick="createProject()">Create</button>
+          <button class="dbg-btn ghost sm" onclick="toggleProjForm(false)">Cancel</button>
+        </div>
+      </div>
+      <div id="projList"></div>
+    </div>
     <div class="sec" id="startSec" style="display:none">
       <div class="sec-h">Try asking</div>
       <div id="starters"></div>
@@ -911,7 +965,7 @@
     <div class="composer">
       <div class="composer-inner">
         <span class="ps1" style="font-size:12px">⌕</span>
-        <input id="q" placeholder="Ask the codebase… e.g. how is authentication handled?" autocomplete="off" />
+        <textarea id="q" rows="1" placeholder="Ask the codebase… e.g. how is authentication handled?  (Shift+Enter for a new line)" autocomplete="off"></textarea>
         <button class="btn" id="send">Ask →</button>
       </div>
       <div class="hint">
@@ -938,6 +992,7 @@
 <script>
 const $ = s => document.querySelector(s);
 let activeNs = null, history = [], nsMeta = {};
+let activeProject = null;   // the selected cross-repo project (null = a normal repo)
 
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const SPARKLE_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">'
@@ -1083,6 +1138,13 @@ async function loadNamespaces(){
     const d = await api('/v1/namespaces');
     const list = d.namespaces || [];
     nsMeta = {};
+    list.forEach(n => { nsMeta[n.namespace] = n; });
+    // Cross-repo projects section: available once 2+ repos are indexed (or any project exists)
+    await loadProjects();
+    const projSec = document.getElementById('projSec');
+    if (projSec) projSec.style.display = (list.length >= 2 || _dbg.projects.length) ? '' : 'none';
+    renderRepoPicker();
+    renderProjectList();
     const c = $('#nsList');
     if (!list.length){ c.innerHTML = '<div class="empty-side">None yet — ingest one above.</div>'; return; }
     c.innerHTML = '';
@@ -1106,6 +1168,10 @@ async function loadNamespaces(){
 
 function setActive(ns){
   activeNs = ns; history = [];
+  activeProject = null;   // selecting a repo leaves cross-repo debug mode
+  const rb = $('#resyncBtn'); if (rb) rb.style.display = '';
+  $('#q').placeholder = 'Ask the codebase… e.g. how is authentication handled?  (Shift+Enter for a new line)';
+  document.querySelectorAll('.proj-row').forEach(el => el.classList.remove('active'));
   $('#nsNow').textContent = ns || '—';
   $('#hintNs').textContent = ns ? 'Session: ' + ns : '';
   $('#tourSec').style.display = ns ? '' : 'none';
@@ -1139,7 +1205,7 @@ function emptyState(title, sub, chips){
   return '<div class="empty"><h2>' + esc(title) + '</h2>'
     + (sub ? '<p>' + esc(sub) + '</p>' : '') + chipHtml + '</div>';
 }
-function fillQ(btn){ $('#q').value = btn.textContent; $('#q').focus(); }
+function fillQ(btn){ $('#q').value = btn.textContent; $('#q').focus(); _autogrowQ(); }
 
 async function restoreChatLog(ns){
   try {
@@ -1158,6 +1224,7 @@ async function restoreChatLog(ns){
           const sm = {};
           t.sources.forEach(s => { sm[s.path] = s; });
           bot._srcMap = sm;
+          card.insertAdjacentHTML('beforeend', renderSources({ sources: t.sources, grounded: true }));
         }
         addCopyButton(card, t.content);
       }
@@ -1574,10 +1641,21 @@ function wireOpenSource(ev){
   openFileViewer(path);
 }
 function renderSources(d){
-  const srcs = (d.sources || []).filter(s => s.score > 0 || s.used);
+  let srcs = (d.sources || []).filter(s => s.score > 0 || s.used);
   if (!srcs.length){
     // Only surface a warning when ungrounded; show nothing when grounded with no sources
     return d.grounded ? '' : '<div class="src-bar"><span class="chip bad">⚠ Ungrounded</span></div>';
+  }
+  // Cross-repo answers tag each source with its repo — cluster same-repo cards and
+  // surface a "repos involved" row so it reads like the multi-repo trace it is.
+  const isMulti = srcs.some(s => s.repo);
+  let involvedRow = '';
+  if (isMulti){
+    const order = [];
+    srcs.forEach(s => { const r = s.repo || ''; if (r && !order.includes(r)) order.push(r); });
+    srcs = srcs.slice().sort((a, b) => order.indexOf(a.repo || '') - order.indexOf(b.repo || ''));
+    involvedRow = '<div class="repos-involved"><span class="lbl">Repos involved</span>'
+      + order.map(repoTag).join('') + '</div>';
   }
   const bestScore = Math.max(...srcs.map(s => s.score || 0));
   const scoreW = Math.round(bestScore * 100);
@@ -1597,17 +1675,21 @@ function renderSources(d){
     const lines = (s.line_start && s.line_end) ? ' L' + s.line_start + '–' + s.line_end : '';
     const sc = Math.round((s.score || 0) * 100);
     const snippet = s.snippet ? '<div class="src-snippet"><pre>' + esc(s.snippet) + '</pre></div>' : '';
+    const repoBadge = s.repo ? repoTag(s.repo) + ' ' : '';
+    const repoAttr = s.repo ? ' data-openrepo="' + esc(s.repo) + '"' : '';
     return '<div class="src-card' + (i === 0 ? ' open' : '') + '" onclick="this.classList.toggle(\'open\')">'
       + '<div class="src-card-head">'
       + '<span class="src-ic">&lt;/&gt;</span>'
-      + '<span class="src-path" data-openfile="' + esc(s.path) + '" onclick="event.stopPropagation();openFileViewer(this.dataset.openfile)">' + esc(s.path) + '</span>'
+      + repoBadge
+      + '<span class="src-path" data-openfile="' + esc(s.path) + '"' + repoAttr + ' onclick="event.stopPropagation();openFileViewer(this.dataset.openfile, this.dataset.openrepo||undefined)">' + esc(s.path) + '</span>'
       + '<span class="src-lines">' + esc(lines) + '</span>'
       + '<span class="src-score-wrap"><span class="src-score-n">' + sc + '</span>'
       + '<span class="src-score-bar"><i style="width:' + sc + '%"></i></span></span>'
       + '<span class="src-toggle">›</span>'
       + '</div>' + snippet + '</div>';
   }).join('');
-  return bar + '<div class="srcs-block"><div class="srcs-h">Cited from the index</div>' + cards + '</div>';
+  const heading = isMulti ? 'Cited across repos' : 'Cited from the index';
+  return bar + involvedRow + '<div class="srcs-block"><div class="srcs-h">' + heading + '</div>' + cards + '</div>';
 }
 
 /* ---------- full-file viewer (modal) ---------- */
@@ -1621,16 +1703,17 @@ function _applyFvMode(){
 }
 window.addEventListener('resize', _applyFvMode);
 
-async function openFileViewer(path){
+async function openFileViewer(path, repo){
   if (!path) return;
-  if (!activeNs) return toast('Select a repo first', true);
+  const ns = repo || activeNs;               // repo overrides for cross-repo debug
+  if (!ns) return toast('Select a repo first', true);
   const modal = $('#fileModal'), body = $('#fvBody');
-  $('#fvPath').textContent = path;
+  $('#fvPath').textContent = (repo ? repo + ' / ' : '') + path;
   body.innerHTML = '<div class="fv-loading">Loading ' + esc(path) + '…</div>';
   modal.classList.add('open');
   _applyFvMode();  // dock on the right (wide screens) or center as a modal (laptops)
   try {
-    const f = await api('/v1/file/' + encodeURIComponent(activeNs) + '?path=' + encodeURIComponent(path));
+    const f = await api('/v1/file/' + encodeURIComponent(ns) + '?path=' + encodeURIComponent(path));
     const meta = '<div class="fv-meta">' + esc(f.language || '') + ' · ' + (f.lines || 0) + ' lines'
       + (f.truncated ? ' · <span class="fv-trunc">large file — showing the first indexed portion</span>' : '') + '</div>';
     body.innerHTML = meta + '<pre class="fv-code">' + highlight(f.content || '') + '</pre>';
@@ -1994,6 +2077,7 @@ async function send(){
   if (!q) return;
   if (!activeNs) return toast('Ingest or select a repo first', true);
   $('#q').value = '';
+  $('#q').style.height = 'auto';
   // If tour is active, clear the tour UI but keep _tour state so we can return to it
   if (_tour) { const tourEl = $('#stream').querySelector('.tour'); if (tourEl) tourEl.remove(); }
   addTurn('<div class="user-bubble">' + esc(q) + '</div>' + USER_AV_EL, 'user');
@@ -2009,10 +2093,16 @@ async function send(){
 
   try {
     const payload = history.slice(-12).map(h => ({ role: h.role, content: String(h.content).slice(0, 1000) }));
-    const askBody = { namespace: activeNs, question: q, history: payload };
     const key = $('#key').value.trim();
+    // A project routes to the cross-repo debug agent; a repo to normal Q&A.
+    const url = activeProject
+      ? '/v1/debug/' + encodeURIComponent(activeProject.slug) + '/stream'
+      : '/v1/ask/stream';
+    const askBody = activeProject
+      ? { question: q, history: payload }
+      : { namespace: activeNs, question: q, history: payload };
 
-    const resp = await fetch('/v1/ask/stream', {
+    const resp = await fetch(url, {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
       body:JSON.stringify(askBody),
@@ -2089,15 +2179,146 @@ async function send(){
   }
 }
 
+/* ================= Cross-repo projects (a first-class chat context) ================= */
+const _dbg = { projects: [] };
+const DBG_PALETTE = ['#2f81f7','#3fb950','#db6d28','#a371f7','#e3b341','#f778ba','#39c5cf','#ff7b72'];
+const DEBUG_STARTERS = [
+  'Trace a 500 error from the UI to the backend',
+  'Where is the API contract between frontend and backend?',
+  'Why might login fail across the app?',
+  'What breaks if the auth token is missing?',
+];
+
+function repoColor(repo){
+  const list = (activeProject && activeProject.namespaces) || [];
+  let i = list.indexOf(repo);
+  if (i < 0){ i = 0; for (const ch of String(repo)) i = (i + ch.charCodeAt(0)) % DBG_PALETTE.length; }
+  return DBG_PALETTE[i % DBG_PALETTE.length];
+}
+function repoTag(repo){
+  return '<span class="repo-tag" style="background:' + repoColor(repo) + '">' + esc(repo) + '</span>';
+}
+
+async function loadProjects(){
+  try { const d = await api('/v1/projects'); _dbg.projects = d.projects || []; }
+  catch { _dbg.projects = []; }
+}
+
+function renderRepoPicker(){
+  const el = $('#projRepos'); if (!el) return;
+  const repos = Object.keys(nsMeta);
+  el.innerHTML = repos.length
+    ? repos.map(r => '<label class="repo-check"><input type="checkbox" value="' + esc(r)
+        + '" onchange="this.closest(\'.repo-check\').classList.toggle(\'on\',this.checked)">' + esc(r) + '</label>').join('')
+    : '<div class="dbg-empty" style="font-size:12px;color:var(--faint)">Ingest 2+ repos first.</div>';
+}
+
+function toggleProjForm(show){
+  const f = $('#projForm'); if (!f) return;
+  const open = (show === undefined) ? (f.style.display === 'none') : show;
+  f.style.display = open ? '' : 'none';
+  if (open){ renderRepoPicker(); const n = $('#projName'); if (n) n.focus(); }
+}
+
+function renderProjectList(){
+  const el = $('#projList'); if (!el) return;
+  const sec = document.getElementById('projSec');
+  if (_dbg.projects.length && sec) sec.style.display = '';
+  el.innerHTML = _dbg.projects.length
+    ? _dbg.projects.map(p =>
+        '<div class="proj-row' + (activeProject && activeProject.slug === p.slug ? ' active' : '')
+        + '" data-slug="' + esc(p.slug) + '" onclick="selectProject(\'' + esc(p.slug) + '\')">'
+        + '<span class="pic">⌕</span>'
+        + '<div style="min-width:0"><div class="pn">' + esc(p.name) + '</div>'
+        + '<div class="pr">' + (p.namespaces || []).map(esc).join(' + ') + '</div></div>'
+        + '<button class="del" title="Delete project" onclick="event.stopPropagation();deleteProject(\'' + esc(p.slug) + '\')">✕</button>'
+        + '</div>').join('')
+    : '<div class="dbg-empty" style="font-size:12px;color:var(--faint);padding:2px">No projects yet.</div>';
+}
+
+async function createProject(){
+  const name = $('#projName').value.trim();
+  const namespaces = [...document.querySelectorAll('#projRepos input:checked')].map(i => i.value);
+  if (!name) return toast('Name the project', true);
+  if (namespaces.length < 2) return toast('Pick at least 2 repos', true);
+  try {
+    const p = await api('/v1/projects', { name, namespaces });
+    toast('Project created');
+    $('#projName').value = '';
+    toggleProjForm(false);
+    await loadProjects();
+    renderProjectList();
+    selectProject(p.slug);
+  } catch (e){ toast(e.message, true); }
+}
+
+async function deleteProject(slug){
+  try { await api('/v1/projects/' + encodeURIComponent(slug), undefined, 'DELETE'); }
+  catch (e){ return toast(e.message, true); }
+  if (activeProject && activeProject.slug === slug) activeProject = null;
+  await loadProjects();
+  renderProjectList();
+}
+
+function emptyDebugState(p){
+  const chips = DEBUG_STARTERS.map(q => '<button class="q-chip" onclick="fillQ(this)">' + esc(q) + '</button>').join('');
+  return '<div class="empty"><h2>Debug — ' + esc(p.name) + '</h2>'
+    + '<p>Searching across ' + (p.namespaces || []).map(repoTag).join(' ')
+    + '. Describe a symptom and I\'ll trace it across the repos to the likely cause.</p>'
+    + '<div class="q-chips">' + chips + '</div></div>';
+}
+
+function showProjectStarters(){
+  const st = $('#starters'); if (!st) return;
+  st.innerHTML = '';
+  DEBUG_STARTERS.forEach(q => {
+    const b = document.createElement('button');
+    b.className = 'pill'; b.textContent = q;
+    b.onclick = () => { $('#q').value = q; send(); };
+    st.appendChild(b);
+  });
+  $('#startSec').style.display = '';
+}
+
+// Select a project as the active chat context — questions now run the cross-repo
+// debug agent, but everything (streaming, sources, history) lives in the normal UI.
+async function selectProject(slug){
+  const p = _dbg.projects.find(x => x.slug === slug);
+  if (!p) return;
+  activeProject = p;
+  activeNs = p.slug;   // history + chat persistence are keyed by the project slug
+  history = [];
+  $('#nsNow').textContent = p.name;
+  $('#nsMeta').textContent = '· ' + (p.namespaces || []).length + ' repos';
+  $('#hintNs').textContent = 'Debugging: ' + p.name;
+  const dot = $('#nsDot'); if (dot) dot.style.background = 'var(--brand)';
+  $('#tourSec').style.display = 'none';                 // tours/walkthroughs are per-repo
+  const rb = $('#resyncBtn'); if (rb) rb.style.display = 'none';
+  $('#q').placeholder = 'Describe a problem to trace across ' + (p.namespaces || []).join(' + ') + '…';
+  document.querySelectorAll('.ns').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.proj-row').forEach(el => el.classList.toggle('active', el.dataset.slug === slug));
+  $('#stream').innerHTML = emptyDebugState(p);
+  const restored = await restoreChatLog(p.slug);
+  if (!restored) $('#stream').innerHTML = emptyDebugState(p);
+  showProjectStarters();
+}
+
 $('#send').onclick = send;
 $('#tourBtn').onclick = startTour;
 $('#walkBtn').onclick = startWalkthrough;
-$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeFileViewer(); });
-// any element tagged data-openfile (tour stop path, walkthrough file chip) opens the full file
+// Enter sends; Shift+Enter inserts a new line. Auto-grow the box as it fills.
+function _autogrowQ(){ const el = $('#q'); el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
+$('#q').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$('#q').addEventListener('input', _autogrowQ);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#fileModal').classList.contains('open')) closeFileViewer();
+});
+// any element tagged data-openfile (tour stop path, walkthrough file chip, debug source) opens the full file
 $('#stream').addEventListener('click', e => {
   const el = e.target.closest('[data-openfile]');
-  if (el){ e.preventDefault(); openFileViewer(el.getAttribute('data-openfile')); return; }
+  if (el){ e.preventDefault(); openFileViewer(el.getAttribute('data-openfile'), el.getAttribute('data-openrepo') || undefined); return; }
   // branching-tour navigation (follow a connection / breadcrumb / back / next)
   const goto = e.target.closest('[data-goto]');
   if (goto){ e.preventDefault(); tourGoTo(goto.getAttribute('data-goto')); return; }

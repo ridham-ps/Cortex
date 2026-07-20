@@ -251,6 +251,69 @@ curl -X POST http://localhost:8000/v1/agents/installation-guide/run \
 
 ---
 
+## Cross-repo projects & debugging
+
+A **project** links two or more already-indexed repos so a problem can be traced across them.
+
+### `GET /v1/projects`
+List all cross-repo projects.
+
+### `POST /v1/projects`
+Create (or overwrite) a project. Requires **2+ indexed** namespaces.
+
+**Request**
+```json
+{ "name": "Acme app", "namespaces": ["acme-web", "acme-api"] }
+```
+**Response**
+```json
+{ "slug": "acme-app", "name": "Acme app", "namespaces": ["acme-web", "acme-api"],
+  "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00" }
+```
+`400` if fewer than two repos, or any repo is not indexed yet.
+
+### `GET /v1/projects/{slug}`
+Fetch one project (`404` if unknown).
+
+### `POST /v1/projects/{slug}/repos`
+Replace a project's repo set (same body/validation as create).
+
+### `DELETE /v1/projects/{slug}`
+Delete a project (`404` if unknown).
+
+### `POST /v1/debug/{slug}`
+Root-cause a symptom across every repo in the project.
+
+**Request**
+```json
+{ "question": "users get a 500 when they submit the login form", "history": [] }
+```
+**Response** — an `AskResponse`, but each source carries a `repo`, and
+`trace.grounding.repos_involved` lists the repositories the evidence came from:
+```json
+{ "answer": "Likely cause: the API rejects the payload …",
+  "grounded": true,
+  "sources": [{ "path": "app/auth.py", "repo": "acme-api", "line_start": 40, "line_end": 48, "used": true }],
+  "trace": { "agent_id": "kt-debug-v1", "strategy": "debug",
+             "grounding": { "repos_involved": ["acme-web", "acme-api"] } } }
+```
+`404` if the project is unknown; `503` if the LLM backend is unavailable.
+
+### `POST /v1/debug/{slug}/stream`
+Same as `/v1/debug/{slug}` but streams SSE progress events (`thinking`, `tool_call`,
+`iteration`, `composing`, `done`) — identical event vocabulary to `/v1/ask/stream`.
+
+```bash
+curl -N -X POST http://localhost:8000/v1/debug/acme-app/stream \
+  -H "Authorization: Bearer dev-local-key" -H "Content-Type: application/json" \
+  -d '{"question":"login returns 500"}'
+```
+
+The conversation is saved under the project slug, so `GET /v1/chat/{slug}` returns it and the
+UI restores it like any other repo chat.
+
+---
+
 ## Error responses
 
 All errors return JSON with a `detail` field and (on server errors) an `error_id` for tracing:

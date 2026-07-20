@@ -245,10 +245,14 @@ def select_relevant(chunks: list[dict], k_min: int, k_max: int) -> list[dict]:
 
 
 def _expand_neighbors(store, namespace: str, chunks: list[dict],
-                      limit: int = 5, max_chars: int = 6000) -> list[dict]:
+                      limit: int = 6, max_chars: int = 8000) -> list[dict]:
     """For the strongest hits, splice in the adjacent chunks of the same file
     so the LLM reads the whole surrounding code, not a fragment. Only the
-    prompt context widens — the user-facing snippet stays the original hit."""
+    prompt context widens — the user-facing snippet stays the original hit.
+
+    The top few hits are widened further (radius 2) so the model sees a complete
+    function/section around the match rather than a single-chunk window; weaker
+    hits get radius 1. Each stitch is bounded by `max_chars`."""
     out = []
     for i, c in enumerate(chunks):
         if i < limit and "#" in c.get("id", ""):
@@ -256,15 +260,24 @@ def _expand_neighbors(store, namespace: str, chunks: list[dict],
             path, idx = m.get("path", ""), int(m.get("chunk_index", 0))
             parts = [c["text"]]
             l0, l1 = m.get("line_start", 0), m.get("line_end", 0)
-            prev = store.get_chunk(namespace, f"{path}#{idx - 1}") if idx > 0 else None
-            nxt = store.get_chunk(namespace, f"{path}#{idx + 1}")
-            if prev:
-                parts.insert(0, prev["text"])
-                l0 = prev["metadata"].get("line_start", l0)
-            if nxt:
-                parts.append(nxt["text"])
-                l1 = nxt["metadata"].get("line_end", l1)
-            if prev or nxt:
+            radius = 2 if i < 3 else 1
+            budget = max_chars - len(c["text"])
+            widened = False
+            # walk outward symmetrically: chunk below, then chunk above, per ring
+            for step in range(1, radius + 1):
+                nxt = store.get_chunk(namespace, f"{path}#{idx + step}")
+                if nxt and len(nxt.get("text", "")) <= budget:
+                    parts.append(nxt["text"])
+                    l1 = nxt["metadata"].get("line_end", l1)
+                    budget -= len(nxt["text"])
+                    widened = True
+                prev = store.get_chunk(namespace, f"{path}#{idx - step}") if idx - step >= 0 else None
+                if prev and len(prev.get("text", "")) <= budget:
+                    parts.insert(0, prev["text"])
+                    l0 = prev["metadata"].get("line_start", l0)
+                    budget -= len(prev["text"])
+                    widened = True
+            if widened:
                 c = {**c, "context_text": "".join(parts)[:max_chars], "context_lines": [l0, l1]}
         out.append(c)
     return out
