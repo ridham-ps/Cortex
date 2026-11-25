@@ -1,12 +1,12 @@
 {
-  "_doc": "Probe questions for the RAGAS-style scorecard. These are NOT a gold set — there are no 'expected files'. RAGAS metrics are reference-free: a judge scores each answer for faithfulness/relevancy against the contexts the agent actually retrieved. The last entry is a negative control (the feature doesn't exist) to score honest abstention.",
-  "namespace": "mtn-data-suite",
+  "_doc": "Probe questions for the RAGAS-style scorecard. These are NOT a gold set — there are no 'expected files'. RAGAS metrics are reference-free: a judge scores each answer for faithfulness/relevancy against the contexts the agent actually retrieved. The last entry is a negative control (the feature doesn't exist) to score honest abstention. The namespace must be ingested first.",
+  "namespace": "cortex",
   "questions": [
-    {"id": "auth_overview", "q": "How is authentication handled and where is the access token stored?"},
-    {"id": "route_protection", "q": "How are routes protected from unauthenticated users?"},
-    {"id": "token_refresh", "q": "How does the app handle token refresh when the access token expires?"},
-    {"id": "attach_auth_header", "q": "How does the app attach the auth token to outgoing HTTP requests?"},
-    {"id": "http_services", "q": "How does the app communicate with the backend REST API?"},
-    {"id": "not_found_control", "q": "Where is the director agent feature implemented?", "negative": true}
+    {"id": "claude_auth", "q": "How does the app authenticate to Claude, and what happens if ANTHROPIC_API_KEY is set?"},
+    {"id": "agent_tools", "q": "How are the code-search tools exposed to the Claude agent, and what stops it from using other tools?"},
+    {"id": "source_selection", "q": "How does the chat agent decide which files to return as sources for an answer?"},
+    {"id": "hybrid_search", "q": "How does hybrid retrieval combine TF-IDF and dense search results?"},
+    {"id": "api_auth", "q": "How does the REST API check the bearer token and rate-limit requests?"},
+    {"id": "not_found_control", "q": "Where is the payment processing and Stripe checkout implemented?", "negative": true}
   ]
 }

@@ -31,7 +31,7 @@ def test_home_serves_ui():
 
 
 def test_health_and_catalog():
-    from onboarding_brain import AGENT_ID
+    from cortex import AGENT_ID
     assert client.get("/health").json()["agent_id"] == AGENT_ID
     assert AGENT in {a["agent_id"] for a in client.get("/v1/agents").json()["agents"]}
 
@@ -75,7 +75,7 @@ def test_bad_repo_path_400():
     assert r.status_code == 400
 
 
-def test_ingest_ask_namespaces_flow():
+def test_ingest_ask_namespaces_flow(fake_agent):
     repo = make_repo({"README.md": "# X\n\nApp.\n", "src/auth.py": "def login(u,p): return verify(u,p)\n"})
     try:
         ing = client.post("/v1/ingest", json={"repo_path": str(repo), "namespace": "apitest", "rebuild": True}, headers=AUTH)
@@ -84,11 +84,13 @@ def test_ingest_ask_namespaces_flow():
         nss = client.get("/v1/namespaces", headers=AUTH).json()["namespaces"]
         assert any(n["namespace"] == "apitest" for n in nss)
 
+        fake_agent.reads = ["src/auth.py"]
+        fake_agent.reply = "`login()` in `src/auth.py` delegates to `verify(u, p)`."
         ask = client.post("/v1/ask", json={"namespace": "apitest", "question": "how does login work?"}, headers=AUTH)
         assert ask.status_code == 200
         body = ask.json()
-        assert body["trace"]["agent_id"] == "kt-brain"
-        assert any("auth.py" in s["path"] for s in body["sources"])
+        assert body["trace"]["agent_id"] == "kt-agent-v1"
+        assert [s["path"] for s in body["sources"]] == ["src/auth.py"]
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
@@ -98,13 +100,12 @@ def test_ask_unindexed_400():
     assert r.status_code == 400
 
 
-def test_gaps_and_annotations_endpoints():
+def test_annotations_endpoints():
     repo = make_repo({"README.md": "# X\n\nApp.\n",
                       "src/XfrmSvc.ts": "export class XfrmSvc { run() { return XfrmSvc.go(); } }\n"})
     try:
         client.post("/v1/ingest", json={"repo_path": str(repo), "namespace": "gapapi", "rebuild": True}, headers=AUTH)
-        gaps = client.get("/v1/gaps/gapapi", headers=AUTH).json()["gaps"]
-        assert isinstance(gaps, list)
+        assert client.get("/v1/gaps/gapapi", headers=AUTH).status_code == 404  # gap finder removed
         save = client.post("/v1/annotations/gapapi",
                            json={"file": "src/XfrmSvc.ts", "answer": "Billing reconciliation engine.",
                                  "symbol": "class XfrmSvc"}, headers=AUTH)
@@ -147,26 +148,51 @@ def test_file_endpoint_returns_full_file():
         shutil.rmtree(repo, ignore_errors=True)
 
 
-def test_tour_endpoint_contract():
-    repo = make_repo({"README.md": "# X\n\nApp.\n",
-                      "app/server.py": "from fastapi import FastAPI\nfrom .config import s\napp = FastAPI()\nif __name__ == '__main__':\n    import uvicorn; uvicorn.run(app)\n",
-                      "app/config.py": "s = {}\n"})
+TOUR_REPO = {"README.md": "# X\n\nApp.\n",
+             "app/server.py": "from fastapi import FastAPI\nfrom .config import s\napp = FastAPI()\nif __name__ == '__main__':\n    import uvicorn; uvicorn.run(app)\n",
+             "app/config.py": "s = {}\n"}
+
+
+def test_tour_endpoint_contract_and_cache(fake_agent):
+    repo = make_repo(TOUR_REPO)
     try:
         client.post("/v1/ingest", json={"repo_path": str(repo), "namespace": "tourapi", "rebuild": True}, headers=AUTH)
+        fake_agent.reads = ["app/server.py", "app/config.py"]
+        fake_agent.reply = {"overview": "A FastAPI app.", "entry_point": "app/server.py", "chapters": [
+            {"title": "Startup", "why": "Where it begins.", "stops": [
+                {"path": "app/server.py", "reason": "entry", "insight": "Creates the app."},
+                {"path": "app/config.py", "reason": "settings", "insight": "Holds config."}]}]}
         r = client.get("/v1/tour/tourapi", headers=AUTH)
         assert r.status_code == 200
         body = r.json()
         # matches the TourResponse contract
         assert {"namespace", "entry_point", "total_stops", "chapters"} <= set(body)
-        assert isinstance(body["chapters"], list)
+        assert body["entry_point"] == "app/server.py" and body["total_stops"] == 2
+        # second call is served from tour.json without running the agent again
+        runs = len(fake_agent.system_prompts)
+        assert client.get("/v1/tour/tourapi", headers=AUTH).status_code == 200
+        assert len(fake_agent.system_prompts) == runs
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
 
-def test_chat_history_endpoints():
+def test_tour_endpoint_reports_agent_failure_as_503(fake_agent):
+    repo = make_repo(TOUR_REPO)
+    try:
+        client.post("/v1/ingest", json={"repo_path": str(repo), "namespace": "tourfail", "rebuild": True}, headers=AUTH)
+        fake_agent.reply = "no JSON at all"
+        r = client.get("/v1/tour/tourfail", headers=AUTH)
+        assert r.status_code == 503 and "tour agent" in r.json()["error"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_chat_history_endpoints(fake_agent):
     repo = make_repo({"README.md": "# X\n\nApp.\n", "src/auth.py": "def login(u,p): return verify(u,p)\n"})
     try:
         client.post("/v1/ingest", json={"repo_path": str(repo), "namespace": "histapi", "rebuild": True}, headers=AUTH)
+        fake_agent.reads = ["src/auth.py"]
+        fake_agent.reply = "`login()` lives in `src/auth.py`."
         client.post("/v1/ask", json={"namespace": "histapi", "question": "how does login work?"}, headers=AUTH)
         turns = client.get("/v1/chat/histapi", headers=AUTH).json()["turns"]
         assert len(turns) == 2 and turns[0]["role"] == "user"

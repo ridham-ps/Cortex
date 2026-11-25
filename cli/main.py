@@ -20,8 +20,8 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):  # pragma: no cover
         pass
 
-from onboarding_brain import AGENT_ID, __version__
-from onboarding_brain.config import get_settings
+from cortex import AGENT_ID, __version__
+from cortex.config import get_settings
 
 app = typer.Typer(add_completion=False, help="Onboarding Brain — index any local repo and ask grounded questions")
 
@@ -33,8 +33,8 @@ def ingest(
     rebuild: bool = typer.Option(False, help="Re-index even if already indexed"),
 ):
     """Index a repo into the knowledge base (vector store)."""
-    from onboarding_brain.contract import IngestRequest
-    from onboarding_brain.kt.ingest import ingest_repo
+    from cortex.contract import IngestRequest
+    from cortex.index.ingest import ingest_repo
 
     try:
         resp = ingest_repo(IngestRequest(repo_path=str(repo), namespace=namespace, rebuild=rebuild),
@@ -51,11 +51,11 @@ def ask(
     namespace: str = typer.Option(..., "--namespace", "-n", help="Indexed repo name"),
 ):
     """Ask the KT chatbot a question about an indexed repo."""
-    from onboarding_brain.contract import AskRequest
-    from onboarding_brain.kt.chat import ask as kt_ask
+    from cortex.contract import AskRequest
+    from cortex.agents.chat import ask as chat_ask
 
     try:
-        resp = kt_ask(AskRequest(namespace=namespace, question=question), settings=get_settings())
+        resp = chat_ask(AskRequest(namespace=namespace, question=question), settings=get_settings())
     except ValueError as exc:
         typer.echo(json.dumps({"error": "ask_failed", "detail": str(exc)}), err=True)
         raise typer.Exit(code=2)
@@ -65,7 +65,7 @@ def ask(
 @app.command()
 def namespaces():
     """List indexed repos."""
-    from onboarding_brain.kt.store import get_store
+    from cortex.index.store import get_store
     typer.echo(json.dumps(get_store(get_settings()).list_namespaces(), indent=2, default=str))
 
 

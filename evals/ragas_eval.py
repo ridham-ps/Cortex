@@ -33,21 +33,24 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 os.environ.pop("ANTHROPIC_API_KEY", None)  # force subscription OAuth
 
-from onboarding_brain.config import get_settings
-from onboarding_brain.contract import AskRequest
-from onboarding_brain.kt.chat import ask as kt_ask
-from onboarding_brain.kt.store import get_store
-from onboarding_brain.providers.claude_agent_sdk_provider import ClaudeAgentSDKProvider
+from cortex.config import get_settings
+from cortex.contract import AskRequest
+from cortex.agents.chat import ask as chat_ask
+from cortex.index.store import get_store
+from cortex.agents.claude import get_claude
 
 HERE = Path(__file__).parent
 PROBE = json.loads((HERE / "probe_questions.json").read_text(encoding="utf-8"))
-OUT = HERE / "ragas_results.json"
+OUT = Path(os.getenv("RAGAS_OUT", str(HERE / "ragas_results.json")))
 
 MODELS = [m.strip() for m in os.getenv("AB_MODELS", "haiku,sonnet,opus").split(",") if m.strip()]
 JUDGE_MODEL = os.getenv("AB_JUDGE_MODEL", "sonnet")
 LIMIT = int(os.getenv("AB_LIMIT", "0"))
 QUESTIONS = PROBE["questions"][:LIMIT] if LIMIT else PROBE["questions"]
 NAMESPACE = PROBE["namespace"]
+# How much of each cited file the judge sees, and the total cap (~30k tokens).
+CTX_FILE_CHARS = int(os.getenv("AB_CTX_FILE_CHARS", "40000"))
+CTX_TOTAL_CHARS = int(os.getenv("AB_CTX_TOTAL_CHARS", "120000"))
 
 JUDGE_SYS = (
     "You are a strict RAG evaluation judge. You are given a QUESTION, the ANSWER an AI gave, "
@@ -62,11 +65,11 @@ JUDGE_SYS = (
 )
 
 
-def judge_ragas(judge_provider, question: str, answer: str, contexts: list[str]) -> dict:
-    ctx = "\n\n".join(f"[{i+1}] {c}" for i, c in enumerate(contexts))[:12000] or "(none retrieved)"
+def judge_ragas(judge, question: str, answer: str, contexts: list[str]) -> dict:
+    ctx = "\n\n".join(f"[{i+1}] {c}" for i, c in enumerate(contexts))[:CTX_TOTAL_CHARS] or "(none retrieved)"
     prompt = f"QUESTION:\n{question}\n\nANSWER:\n{answer[:3000]}\n\nCONTEXTS:\n{ctx}"
     try:
-        raw = judge_provider.complete(JUDGE_SYS, prompt).text
+        raw = judge.complete(JUDGE_SYS, prompt)
         v = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
         return {k: float(v[k]) for k in ("faithfulness", "answer_relevancy", "context_relevance") if k in v}
     except Exception as exc:  # noqa: BLE001
@@ -78,13 +81,22 @@ def avg(xs):
     return round(sum(xs) / len(xs), 3) if xs else None
 
 
-def run_model(model: str, judge_provider) -> dict:
+def _file_on_disk(rel_path: str):
+    """The cited file's real text (exact line numbers), or None if not on disk."""
+    try:
+        from cortex.index.ingest import repo_folder
+        return (repo_folder(NAMESPACE) / rel_path).read_text(encoding="utf-8", errors="replace")
+    except (ValueError, OSError):
+        return None
+
+
+def run_model(model: str, judge) -> dict:
     settings = dataclasses.replace(
         get_settings(), claude_sdk_model=("" if model in ("", "default") else model))
     try:
-        provider = ClaudeAgentSDKProvider(settings)
+        get_claude(settings)  # check the Claude login before starting
     except Exception as exc:  # noqa: BLE001
-        return {"model": model, "error": f"provider build failed: {exc}", "rows": []}
+        return {"model": model, "error": f"Claude login check failed: {exc}", "rows": []}
 
     store = get_store(settings)
     rows = []
@@ -92,8 +104,8 @@ def run_model(model: str, judge_provider) -> dict:
         print(f"   [{model}] {q['id']} ...", flush=True)
         t = time.time()
         try:
-            r = kt_ask(AskRequest(namespace=NAMESPACE, question=q["q"], history=[]),
-                       settings=settings, provider=provider)
+            r = chat_ask(AskRequest(namespace=NAMESPACE, question=q["q"], history=[]),
+                       settings=settings)
         except Exception as exc:  # noqa: BLE001
             rows.append({"id": q["id"], "error": str(exc)})
             continue
@@ -104,13 +116,21 @@ def run_model(model: str, judge_provider) -> dict:
         for s in r.sources:
             full = store.full_file(NAMESPACE, s.path)
             body = (full.get("content") or full.get("text") if full else None) or (s.snippet or "")
-            contexts.append(f"{s.path}\n{body[:2000]}")
+            # Number the lines of the real file: answers cite "file.py:42", and the
+            # judge must be able to check those references, not mark them unsupported.
+            disk = _file_on_disk(s.path)
+            if disk is not None:
+                body = "\n".join(f"{i}: {ln}" for i, ln in enumerate(disk.splitlines(), 1))
+            # the judge must see what the agent saw: a 2k-char head cut off the
+            # code most answers cite (e.g. functions defined mid-file), scoring
+            # correct claims as unsupported
+            contexts.append(f"{s.path}\n{body[:CTX_FILE_CHARS]}")
         row = {"id": q["id"], "latency": round(time.time() - t, 1),
                "grounded": r.grounded, "n_sources": len(r.sources), "answer": r.answer}
         if q.get("negative"):
             row["abstention_ok"] = (not r.grounded) and len(r.sources) == 0
         else:
-            row["ragas"] = judge_ragas(judge_provider, q["q"], r.answer, contexts)
+            row["ragas"] = judge_ragas(judge, q["q"], r.answer, contexts)
         rows.append(row)
         print(f"      grounded={row['grounded']} n_src={row['n_sources']} "
               f"ragas={row.get('ragas')} abst={row.get('abstention_ok')} {row['latency']}s")
@@ -118,12 +138,15 @@ def run_model(model: str, judge_provider) -> dict:
 
 
 def summarize(result: dict) -> dict:
+    failed = [r for r in result.get("rows", []) if "error" in r]
     rows = [r for r in result.get("rows", []) if "error" not in r]
     pos = [r for r in rows if "ragas" in r and "error" not in r["ragas"]]
     neg = [r for r in rows if "abstention_ok" in r]
     return {
         "model": result["model"],
-        "error": result.get("error"),
+        # a model-level error, or the first per-question error when every row failed
+        "error": result.get("error") or (failed[0]["error"] if failed and not rows else None),
+        "failed_questions": len(failed),
         "faithfulness": avg([r["ragas"].get("faithfulness") for r in pos]),
         "answer_relevancy": avg([r["ragas"].get("answer_relevancy") for r in pos]),
         "context_relevance": avg([r["ragas"].get("context_relevance") for r in pos]),
@@ -135,13 +158,13 @@ def summarize(result: dict) -> dict:
 def main():
     print(f"RAGAS scorecard | models={MODELS} | judge={JUDGE_MODEL} | "
           f"questions={len(QUESTIONS)} | repo={NAMESPACE}")
-    judge_provider = ClaudeAgentSDKProvider(
+    judge = get_claude(
         dataclasses.replace(get_settings(), claude_sdk_model=JUDGE_MODEL))
 
     results = []
     for model in MODELS:
         print(f"\n=== MODEL: {model} ===")
-        results.append(run_model(model, judge_provider))
+        results.append(run_model(model, judge))
         OUT.write_text(json.dumps(results, indent=2), encoding="utf-8")  # incremental
 
     summaries = [summarize(r) for r in results]
@@ -155,6 +178,8 @@ def main():
         print(f"{s['model']:14}{str(s['faithfulness']):>11}{str(s['answer_relevancy']):>11}"
               f"{str(s['context_relevance']):>11}{str(s['abstention_ok']):>10}"
               f"{str(s['avg_latency'])+'s':>11}")
+        if s["failed_questions"]:
+            print(f"{'':14}  ({s['failed_questions']} question(s) errored — see detail in the JSON)")
     print("=" * 82)
     print("Scores 0.0-1.0 (higher=better). faithfulness=no hallucination; "
           "abstain=honest 'not found' on the negative control.")

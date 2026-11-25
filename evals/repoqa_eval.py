@@ -35,18 +35,15 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 os.environ.pop("ANTHROPIC_API_KEY", None)
 
-import onboarding_brain.kt.ingest as _ingest
-_ingest._fire_briefing_background = lambda *a, **k: None  # no LLM briefing during benchmark ingest
-
-from onboarding_brain.config import get_settings
-from onboarding_brain.contract import AskRequest, IngestRequest
-from onboarding_brain.kt.chat import ask as kt_ask
-from onboarding_brain.kt.ingest import ingest_repo
-from onboarding_brain.providers.claude_agent_sdk_provider import ClaudeAgentSDKProvider
+from cortex.config import get_settings
+from cortex.contract import AskRequest, IngestRequest
+from cortex.agents.chat import ask as chat_ask
+from cortex.index.ingest import ingest_repo
+from cortex.agents.claude import get_claude
 
 HERE = Path(__file__).parent
 CACHE = HERE / ".cache"
-OUT = HERE / "repoqa_results.json"
+OUT = Path(os.getenv("REPOQA_OUT", str(HERE / "repoqa_results.json")))
 DATA_VERSION = os.getenv("REPOQA_DATA_VERSION", "2024-06-23")
 DATA_URL = f"https://github.com/evalplus/repoqa_release/releases/download/{DATA_VERSION}/repoqa-{DATA_VERSION}.json.gz"
 
@@ -125,14 +122,14 @@ PACE_S = float(os.getenv("REPOQA_PACE_S", "3"))      # gap between queries to ea
 RL_TRIES = int(os.getenv("REPOQA_RL_TRIES", "4"))     # retries when rate-limited
 
 
-def _ask_with_backoff(settings, provider, namespace, question):
-    """kt_ask, but retry with growing backoff when the subscription rate-limits.
+def _ask_with_backoff(settings, namespace, question):
+    """chat_ask, but retry with growing backoff when the subscription rate-limits.
     The agent now returns a NOT_FOUND answer with 'rate_limit' in trace.errors
     rather than raising, so we detect it there."""
     r = None
     for attempt in range(RL_TRIES):
-        r = kt_ask(AskRequest(namespace=namespace, question=question, history=[]),
-                   settings=settings, provider=provider)
+        r = chat_ask(AskRequest(namespace=namespace, question=question, history=[]),
+                   settings=settings)
         errs = " ".join(r.trace.errors).lower() if (r.trace and r.trace.errors) else ""
         if "rate_limit" not in errs and "rate limit" not in errs:
             return r
@@ -146,7 +143,7 @@ def run_model(model: str, tasks: list[dict]) -> dict:
     settings = dataclasses.replace(get_settings(),
                                    claude_sdk_model=("" if model in ("", "default") else model))
     try:
-        provider = ClaudeAgentSDKProvider(settings)
+        get_claude(settings)  # check the Claude login before starting
     except Exception as exc:  # noqa: BLE001
         return {"model": model, "error": str(exc), "rows": []}
     rows = []
@@ -154,7 +151,7 @@ def run_model(model: str, tasks: list[dict]) -> dict:
         nd = t["needle"]
         print(f"   [{model}] {t['lang']}/{nd.get('name')} ...", flush=True)
         try:
-            r = _ask_with_backoff(settings, provider, t["namespace"],
+            r = _ask_with_backoff(settings, t["namespace"],
                                   QUERY.format(desc=nd.get("description", "")))
             errs = " ".join(r.trace.errors).lower() if (r.trace and r.trace.errors) else ""
             if "rate_limit" in errs:

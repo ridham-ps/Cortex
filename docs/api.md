@@ -201,14 +201,6 @@ curl -H "Authorization: Bearer dev-local-key" \
 
 ## Utilities
 
-### `GET /v1/gaps/{namespace}`
-Find files that are central to the codebase but lack documentation — candidates for annotation.
-
-```bash
-curl -H "Authorization: Bearer dev-local-key" \
-  http://localhost:8000/v1/gaps/myrepo
-```
-
 ### `GET /v1/file/{namespace}?path=src/auth.py`
 Read the indexed content of a specific file.
 

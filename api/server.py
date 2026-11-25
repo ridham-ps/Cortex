@@ -5,7 +5,7 @@
     GET  /v1/agents              -> catalog
     POST /v1/agents/{id}/run     -> run the agent
 
-Controls: bearer-token auth (stubbed), request-size cap, per-key rate limit,
+Controls: bearer-token auth, request-size cap, per-key rate limit,
 uniform JSON errors, no stack-trace leakage.
 """
 from __future__ import annotations
@@ -24,14 +24,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from onboarding_brain import AGENT_ID, __version__
-from onboarding_brain.config import get_settings
-from onboarding_brain.contract import AnnotateRequest, AskRequest, IngestRequest
-from onboarding_brain.kt.chat import ask as kt_ask
-from onboarding_brain.kt.chat import clear_chat_history, load_chat_history
-from onboarding_brain.kt.ingest import ingest_repo
-from onboarding_brain.kt.store import get_store, slugify
-from onboarding_brain.trace import logger
+from cortex import AGENT_ID, __version__
+from cortex.config import get_settings
+from cortex.contract import AnnotateRequest, AskRequest, IngestRequest
+from cortex.agents.chat import ask as chat_ask
+from cortex.agents.chat import clear_chat_history, load_chat_history
+from cortex.index.ingest import ingest_repo
+from cortex.index.store import get_store, slugify
+from cortex.trace import logger
 
 app = FastAPI(title="Cortex — Codebase Intelligence", version=__version__)
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -117,13 +117,13 @@ async def health() -> dict[str, Any]:
 
 @app.get("/v1/agents")
 async def list_agents() -> dict[str, Any]:
-    from onboarding_brain.agents import list_agents as _list
+    from cortex.install_guide import list_agents as _list
     return {"agents": _list(get_settings())}
 
 
 @app.post("/v1/agents/{agent_id}/run")
 async def run_agent(agent_id: str, request: Request, _: str = Depends(require_auth)):
-    from onboarding_brain.agents import run_agent as _run
+    from cortex.install_guide import run_agent as _run
     settings = get_settings()
     raw = await request.body()
     if len(raw) > settings.max_request_bytes:
@@ -175,6 +175,8 @@ async def ingest(request: Request, _: str = Depends(require_auth)):
     try:
         resp = await run_in_threadpool(_ingest_locked)
     except ValueError as exc:
+        # log the reason too — otherwise the terminal only shows "400 Bad Request"
+        logger.warning("ingest_rejected: %s", exc, extra={"event": "ingest_rejected"})
         raise HTTPException(status_code=400, detail=str(exc))
     except (ImportError, ModuleNotFoundError) as exc:
         # dense/hybrid backend needs fastembed; missing dep must not 500
@@ -203,7 +205,7 @@ async def resync(namespace: str, request: Request, _: str = Depends(require_auth
             token = str((json.loads(raw) or {}).get("clone_token", "") or "")
         except Exception:
             token = ""
-    from onboarding_brain.kt.ingest import resync_namespace
+    from cortex.index.ingest import resync_namespace
     try:
         result = await run_in_threadpool(resync_namespace, namespace, clone_token=token, settings=settings)
     except ValueError as exc:
@@ -218,7 +220,7 @@ async def ask_endpoint(request: Request, _: str = Depends(require_auth)):
     settings = get_settings()
     model = _parse_body(await request.body(), AskRequest, settings.max_request_bytes)
     try:
-        resp = await run_in_threadpool(kt_ask, model, settings=settings)
+        resp = await run_in_threadpool(chat_ask, model, settings=settings)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except (RuntimeError, ImportError, ModuleNotFoundError) as exc:
@@ -241,7 +243,7 @@ async def ask_stream_endpoint(request: Request, _: str = Depends(require_auth)):
 
     def _run() -> None:
         try:
-            resp = kt_ask(model, settings=settings,
+            resp = chat_ask(model, settings=settings,
                           event_callback=lambda e: event_queue.put(e))
             result_holder["resp"] = resp
         except ValueError as exc:
@@ -292,43 +294,33 @@ async def ask_stream_endpoint(request: Request, _: str = Depends(require_auth)):
     )
 
 
-@app.get("/v1/gaps/{namespace}")
-async def gaps(namespace: str, _: str = Depends(require_auth)) -> dict[str, Any]:
-    from onboarding_brain.kt.knowledge import detect_gaps
-    try:
-        return {"namespace": namespace, "gaps": detect_gaps(namespace, settings=get_settings())}
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
 @app.get("/v1/tour/{namespace}")
 async def tour(namespace: str, refresh: bool = False,
                _: str = Depends(require_auth)) -> JSONResponse:
-    """Guided Codebase Tour — an ordered learning path of real files for new joiners.
-    Stops carry an LLM one-line insight (narration); since that is expensive it is
-    cached to tour.json and reused. Pass ?refresh=true to regenerate.
+    """Guided Codebase Tour, designed by the tour agent. An agent run takes about
+    a minute, so the result is cached to tour.json; ?refresh=true rebuilds it.
     Response shape is the TourResponse contract (contract.py)."""
-    from onboarding_brain.contract import TourResponse
-    from onboarding_brain.kt.tour import build_tour, load_cached_tour, save_cached_tour
+    from cortex.contract import TourResponse
+    from cortex.agents.tour import build_tour, load_cached_tour, save_cached_tour
     settings = get_settings()
 
-    # serve a narrated cache when available (unless the caller forces a refresh)
     if not refresh:
         cached = load_cached_tour(namespace, settings=settings)
-        # "flow_graph" key gates the branching-tour schema: caches written before
-        # it existed are treated as stale so the richer tour is regenerated once.
-        if cached and cached.get("narrated") and "flow_graph" in cached:
+        # only agent-built tours are served from cache; older caches are rebuilt once
+        if cached and cached.get("generated_by") == "agent":
             try:
                 return JSONResponse(content=TourResponse.model_validate(cached).model_dump(mode="json"))
             except Exception:
-                pass  # stale/invalid cache shape — fall through and rebuild
+                pass  # invalid cache shape — fall through and rebuild
 
     try:
-        raw = await run_in_threadpool(build_tour, namespace, narrate=True, settings=settings)
+        raw = await run_in_threadpool(build_tour, namespace, settings=settings)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    if raw.get("narrated"):  # only cache once narration succeeded
-        await run_in_threadpool(save_cached_tour, namespace, raw, settings=settings)
+    except RuntimeError as exc:  # agent unavailable or returned nothing usable
+        raise HTTPException(status_code=503, detail=f"tour agent: {exc}")
+    raw["generated_by"] = "agent"
+    await run_in_threadpool(save_cached_tour, namespace, raw, settings=settings)
     # validate the agent's output against the published contract before returning
     return JSONResponse(content=TourResponse.model_validate(raw).model_dump(mode="json"))
 
@@ -347,30 +339,34 @@ async def get_file(namespace: str, path: str, _: str = Depends(require_auth)) ->
 @app.get("/v1/walkthrough/{namespace}")
 async def get_walkthrough(namespace: str, _: str = Depends(require_auth)) -> dict[str, Any]:
     """Poll the full project walkthrough. Returns {status:'ready', ...WalkthroughResponse}
-    when cached, else {status:'generating'} or {status:'absent'} (POST to start one)."""
-    from onboarding_brain.contract import WalkthroughResponse
-    from onboarding_brain.kt.walkthrough import load_cached_walkthrough, walkthrough_running
+    when cached, {status:'generating'} while the agents work, {status:'failed', error}
+    if the last run failed, else {status:'absent'} (POST to start one)."""
+    from cortex.contract import WalkthroughResponse
+    from cortex.agents.walkthrough import (load_cached_walkthrough, walkthrough_error,
+                                                 walkthrough_running)
     settings = get_settings()
+    if walkthrough_running(namespace):
+        return {"status": "generating"}
     cached = load_cached_walkthrough(namespace, settings=settings)
-    if cached:
-        # a cache made offline (structural) is stale once an LLM backend is set —
-        # treat it as absent so the client regenerates a full narrative version
-        stale = cached.get("generated_with") == "structural" and settings.backend != "mock"
-        if not stale:
-            try:
-                doc = WalkthroughResponse.model_validate(cached).model_dump(mode="json")
-                return {"status": "ready", **doc}
-            except Exception:
-                pass
-    return {"status": "generating" if walkthrough_running(namespace) else "absent"}
+    # only agent-written walkthroughs count; older caches are treated as absent
+    if cached and str(cached.get("generated_with", "")).endswith("(agent)"):
+        try:
+            doc = WalkthroughResponse.model_validate(cached).model_dump(mode="json")
+            return {"status": "ready", **doc}
+        except Exception:
+            pass
+    err = walkthrough_error(namespace)
+    if err:
+        return {"status": "failed", "error": err}
+    return {"status": "absent"}
 
 
 @app.get("/v1/walkthrough/{namespace}/pdf")
 async def walkthrough_pdf(namespace: str, _: str = Depends(require_auth)) -> Response:
     """Download the project walkthrough as a real PDF (generated server-side)."""
-    from onboarding_brain.contract import WalkthroughResponse
-    from onboarding_brain.kt.walkthrough import load_cached_walkthrough
-    from onboarding_brain.kt.walkthrough_pdf import build_walkthrough_pdf
+    from cortex.contract import WalkthroughResponse
+    from cortex.agents.walkthrough import load_cached_walkthrough
+    from cortex.walkthrough_pdf import build_walkthrough_pdf
     settings = get_settings()
     cached = load_cached_walkthrough(namespace, settings=settings)
     if not cached:
@@ -388,8 +384,8 @@ async def walkthrough_pdf(namespace: str, _: str = Depends(require_auth)) -> Res
 @app.post("/v1/walkthrough/{namespace}")
 async def start_walkthrough(namespace: str, _: str = Depends(require_auth)) -> dict[str, Any]:
     """Kick off (or restart) background generation of the full project walkthrough."""
-    from onboarding_brain.kt.store import slugify
-    from onboarding_brain.kt.walkthrough import fire_walkthrough_background
+    from cortex.index.store import slugify
+    from cortex.agents.walkthrough import fire_walkthrough_background
     settings = get_settings()
     if not get_store(settings).exists(slugify(namespace)):
         raise HTTPException(status_code=400, detail=f"namespace not indexed: {namespace}")
@@ -399,7 +395,7 @@ async def start_walkthrough(namespace: str, _: str = Depends(require_auth)) -> d
 
 @app.get("/v1/annotations/{namespace}")
 async def annotations_list(namespace: str, _: str = Depends(require_auth)) -> dict[str, Any]:
-    from onboarding_brain.kt.knowledge import load_annotations
+    from cortex.storage.annotations import load_annotations
     try:
         return {"namespace": namespace, "annotations": load_annotations(namespace, settings=get_settings())}
     except ValueError as exc:
@@ -408,7 +404,7 @@ async def annotations_list(namespace: str, _: str = Depends(require_auth)) -> di
 
 @app.post("/v1/annotations/{namespace}")
 async def annotations_save(namespace: str, request: Request, _: str = Depends(require_auth)):
-    from onboarding_brain.kt.knowledge import save_annotation
+    from cortex.storage.annotations import save_annotation
     settings = get_settings()
     body = _parse_body(await request.body(), AnnotateRequest, settings.max_request_bytes)
     try:
@@ -443,7 +439,7 @@ async def http_exc(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
     # attach a correlation id so a user-reported 500 can be tied to the log line
-    from onboarding_brain.trace import new_trace_id
+    from cortex.trace import new_trace_id
     err_id = new_trace_id()
     logger.exception("unhandled_error error_id=%s", err_id, extra={"event": "unhandled_error", "error_id": err_id})
     return JSONResponse(status_code=500, content={"error": "internal_error", "error_id": err_id})

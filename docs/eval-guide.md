@@ -1,184 +1,151 @@
 # Evaluation Guide — Cortex
 
-## Overview
+Cortex is checked in two separate ways, because they answer different questions:
 
-Cortex uses a two-layer evaluation strategy:
-
-1. **Deterministic gate** (`evals/runner.py`) — fast, hermetic, CI-blocking. No LLM needed.
-2. **LLM-as-judge** (rubric in `evals/rubric.md`) — for narrative quality scoring on real repos.
-
-The deterministic gate is the regression guard. It must pass before any change is merged.
+| | Test suite | Live benchmarks |
+|---|---|---|
+| Question it answers | Do the rules around the agents work? | Are the real agent's answers good? |
+| Calls Claude? | **Never** | Yes (your Claude login) |
+| Speed | ~10 s | Minutes |
+| Runs in CI? | Yes, every push | No, run by hand |
+| Command | `python -m pytest -q` | `python -m evals.ragas_eval` · `python -m evals.repoqa_eval` |
 
 ---
 
-## Running the evals
+## 1. The test suite (`tests/`)
 
 ```powershell
-# Full quality gate (31 cases, all agents)
-.\.venv\Scripts\python.exe -m evals.runner
-
-# With custom pass threshold (default: 1.0 = 100%)
-.\.venv\Scripts\python.exe -m evals.runner --threshold 0.9
-
-# Run only one agent
-.\.venv\Scripts\python.exe -m evals.runner --agent chat
-
-# Write results to a custom path
-.\.venv\Scripts\python.exe -m evals.runner --output evals/results_ci.json
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-Exit code `0` = gate passed. Exit code `1` = one or more cases failed (blocks CI).
+Every agent run in Cortex goes through one function: `run_tool_agent()` in
+`cortex/agents/loop.py`. `tests/conftest.py` replaces it for every test:
 
----
+- **By default, with a guard.** A test that reaches the agent loop without asking for a
+  scripted agent fails immediately with "test tried to call Claude". The suite can never
+  use your subscription by accident.
+- **With the `fake_agent` fixture,** by a scripted agent. You set which files it opens
+  (`fake_agent.reads`) and what it answers (`fake_agent.reply`). It opens the files through
+  the **real** `ToolExecutor`, so `used_paths`, source grounding and path validation behave
+  exactly as in production; only the model's decisions are scripted.
 
-## Test coverage
-
-20 deterministic cases across 4 agents:
-
-| Agent | Cases | What is tested |
-|---|---|---|
-| `chat` | 9 | Retrieval relevance, grounding, no hallucination, follow-up with history |
-| `tour` | 5 | Entry-point detection across Python / Node / Go / Flask / FastAPI |
-| `walkthrough` | 3 | Stack detection, section structure, file grounding |
-| `installation` | 3 | Prerequisite inference for Angular / FastAPI / Go stacks |
-
-Each case builds a **throwaway fixture repo in memory** — no real git clone, no embedding model download, no LLM call required. Tests are fully hermetic and run in seconds.
-
-### How it stays deterministic — the stub provider
-
-A real LLM phrases answers differently every run, so exact-match checks can only pass against a deterministic generator. The gate uses a **stub provider** (`evals/stub_provider.py`) — a test double that produces grounded, repeatable output purely from the repo context (it only cites files that exist and says "not found in repo" when data is absent).
-
-Crucially, the stub is **not a user-facing backend**. The one real backend is `claude_sdk` (the Claude Agent SDK). The stub enters only via `install_stub()`, which monkeypatches `get_provider` in the agent-flow modules at runtime:
-
-- `evals/runner.py` calls `install_stub(settings)` — the whole gate runs on it.
-- `tests/conftest.py` calls `install_stub(settings, patch_source=False)` — the pytest suite runs on it too, but `patch_source=False` leaves the real `providers.get_provider` intact for tests that inspect the real factory. Because the stub is not the SDK provider, chat falls through to the deterministic RAG pipeline (the offline test harness) rather than the live SDK agent loop.
-
-The stub dispatches by prompt shape: chat → grounded answer citing the context files; walkthrough → section body + takeaways; otherwise → empty (condense falls back to the offline condenser). `results.json` records `"model_used": "stub/deterministic-v1"` so it's obvious a run was hermetic.
-
----
-
-## What each check verifies
-
-| Check | Agent | Meaning |
-|---|---|---|
-| `setup_contains` | install | Run steps match the actual build config (npm / pip / docker / go / cargo) |
-| `setup_source` | install | Setup steps cite the real config file |
-| `status_not: failed` | install | The run produced a usable result |
-| `source_contains` | chat | The right file was surfaced for the question |
-| `grounded` | chat | Answer has at least one real source attached |
-| `no_hallucinated` | chat | No cited file is invented / absent from the index |
-| `entry_endswith` | tour | The bootstrap file is detected correctly for each stack |
-| `min_stops` | tour | Tour has enough stops to be useful |
-| `has_main` | tour | The entry-point stop is flagged as `is_entry: true` |
-| `first_chapter` | tour | Chapter titles match expected framework-aware flow |
-| `stack_contains` | walkthrough | Detected tech stack includes the expected frameworks |
-| `min_sections` | walkthrough | Walkthrough has the full 9-section structure |
-| `has_section` | walkthrough | Named sections are present |
-| `grounded_files` | walkthrough | Sections reference real indexed files |
-| `prereq_contains` | install | The right toolchain prerequisite is stated |
-
-A case **passes** only when ALL its checks pass.  
-The gate **passes** when `passed / total >= threshold` (default 1.0).
-
----
-
-## Reading results.json
-
-```json
-{
-  "gate_passed": true,
-  "pass_rate": 1.0,
-  "total_cases": 20,
-  "passed": 20,
-  "failed": 0,
-  "per_agent": {
-    "chat":          { "total":  9, "passed":  9 },
-    "tour":          { "total":  5, "passed":  5 },
-    "walkthrough":   { "total":  3, "passed":  3 },
-    "installation":  { "total":  3, "passed":  3 }
-  },
-  "cases": [ ... ]
-}
-```
-
-**`gate_passed: true`** — safe to ship.
-
-**When a case fails**, find it in `cases[]` and read the failing check:
-```json
-{
-  "agent": "chat",
-  "id": "rag_finds_auth_file",
-  "passed": false,
-  "checks": [
-    { "check": "source_contains", "passed": false, "detail": "expected src/auth.py, got []" }
-  ]
-}
-```
-The `detail` field explains what the agent returned vs. what was expected.
-
----
-
-## Adding a new test case
-
-1. Open `evals/runner.py`.
-2. Add a new dict to the relevant agent's case list (e.g. `RAG_CASES`):
 ```python
-{
-    "id": "my_new_case",
-    "files": {
-        "README.md": "# MyTool\nA tool for X.\n",
-        "pyproject.toml": "[tool.poetry]\nname = 'mytool'\n",
-    },
-    "question": "what does this project do?",   # for chat cases
-    "expect": {
-        "overview_contains": "MyTool",
-        "no_unresolved_sources": True,
-    },
-},
-```
-3. Run `python -m evals.runner` to confirm it passes (or debug the failure).
-4. Commit both the new case and the updated `results.json`.
-
----
-
-## LLM-as-judge (narrative quality)
-
-The deterministic gate verifies structure and grounding. To evaluate prose quality on real repos:
-
-1. Run `python -m evals.runner --agent chat --real-repo <namespace>` (if implemented) or collect answers manually.
-2. Score each answer against the rubric in `evals/rubric.md`:
-
-| Dimension | 0 | 1 | 2 |
-|---|---|---|---|
-| **Grounding** | Invented files cited | Some sources unresolved | All sources resolve to real files |
-| **Accuracy** | Wrong answer | Partially correct | Correct and complete |
-| **Conciseness** | Verbose / padded | Acceptable | Tight, senior-engineer Slack style |
-| **Source citation** | No citations | Vague ("in some file") | Exact path + line numbers |
-| **Honest uncertainty** | Guesses when unsure | Hedges but doesn't say "not found" | Explicitly says "I couldn't find this" |
-
-Score ≥ 8 / 10 = acceptable. Score < 6 = investigate prompt or retrieval.
-
----
-
-## CI integration
-
-The quality gate runs automatically on every push via `.github/workflows/ci.yml`:
-
-```yaml
-- name: Quality gate
-  run: python -m evals.runner --threshold 1.0
+def test_chat_sources_are_files_named_and_read(repo_ns, fake_agent):
+    fake_agent.reads = ["etl/main.py", "etl/extract.py", "etl/load.py"]
+    fake_agent.reply = "Execution starts in `etl/main.py` ... `etl/extract.py` ... `etl/unused.py`."
+    r = ask(AskRequest(namespace=repo_ns, question="where does the pipeline start?"))
+    # load.py was read but not named; unused.py was named but never read
+    assert {s.path for s in r.sources} == {"etl/main.py", "etl/extract.py"}
 ```
 
-The step exits non-zero on any regression, blocking the merge. `results.json` is uploaded as a build artifact so failures can be inspected without re-running locally.
+| File | Covers |
+|---|---|
+| `test_agents.py` | The three agents: grounded chat sources, honest not-found, greetings skipping the agent, missing login reported (not hidden); tour and walkthrough built from the agent's structure with invented/unseen paths dropped; failures raised clearly |
+| `test_builtin_tools.py` | The fence (paths outside the repo or in `.git` refused), recording what the agent saw, kept clones |
+| `test_engine.py` | The engine under the agents: chunking, search ranking, ingest, re-sync, wiring, chat-history storage, annotations, path safety |
+| `test_api.py` | HTTP layer: auth, rate limit, size limits, error codes, tour caching, tour failure → 503, chat history endpoints |
+| `test_claude_connection.py` | Subscription login rules and the search_code tool |
+| `test_install_guide.py` | Setup steps and prerequisites from config files |
+
+**Adding a test for agent behaviour:** request `fake_agent`, script `reads` and `reply`
+(a string, a dict that becomes JSON, or a function `(system_prompt, prompt) -> reply` when
+one test drives several agents, like the walkthrough planner and writers), then assert on
+what Python did with it.
 
 ---
 
-## Known failure modes
+## 2. Live benchmarks (`evals/`)
 
-| Symptom | Likely cause | Fix |
+These run the **real** agent and need your Claude login. Run them after changing a prompt,
+the tools or the model.
+
+### RAGAS-style scorecard: `evals/ragas_eval.py`
+
+Asks the questions in `evals/probe_questions.json` and has an LLM judge score each answer
+(0.0–1.0):
+
+- **faithfulness:** are the answer's claims supported by the code the agent read?
+- **answer_relevancy:** does it answer the question?
+- **context_relevance:** was what it read relevant?
+- **abstention:** for a feature that doesn't exist, did it say so with no sources?
+
+The probe targets the namespace named in `probe_questions.json` (`cortex`), so index this
+repo under that name first:
+
+```powershell
+.\.venv\Scripts\python.exe -m cli.main ingest --repo . -n cortex
+.\.venv\Scripts\python.exe -m evals.ragas_eval
+```
+
+| Variable | Default | Meaning |
 |---|---|---|
-| `source_contains` fails on chat case | Retrieval missed the file; wrong embedding | Check chunk size, try `hybrid` backend |
-| `overview_equals: "not found in repo"` fails | Model invented content from empty repo | Strengthen system prompt grounding rules |
-| `no_unresolved_sources` fails on real LLM run | Model cited a file that doesn't exist | Grounding validator should catch this; check `grounding.py` |
-| `injection_in_readme_neutralized` fails | System prompt DATA boundary not working | Verify `<<<REPO_CONTEXT_JSON>>>` markers in `prompts.py` |
-| Gate passes but answers are bad | Gate checks structure, not prose | Run LLM-as-judge rubric on real-repo samples |
+| `AB_MODELS` | `haiku,sonnet,opus` | Models to compare |
+| `AB_JUDGE_MODEL` | `sonnet` | Model that scores the answers |
+| `AB_LIMIT` | `0` (all) | Only the first N questions (smoke test) |
+
+Writes `evals/ragas_results.json`.
+
+### Code search benchmark: `evals/repoqa_eval.py`
+
+Adapted from the public RepoQA "find the function from its description" benchmark: it
+indexes RepoQA repos, asks the agent to locate each described function, and checks whether
+it names the right one. It's comparable to the RepoQA leaderboard only loosely, because
+the protocol is different.
+
+```powershell
+.\.venv\Scripts\python.exe -m evals.repoqa_eval
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AB_MODELS` | `haiku,sonnet,opus` | Models to compare |
+| `REPOQA_LANGS` | `typescript,python` | Languages to sample |
+| `REPOQA_REPOS` | `1` | Repos per language |
+| `REPOQA_NEEDLES` | `5` | Functions to find per repo |
+
+Writes `evals/repoqa_results.json`; the dataset is cached in `evals/.cache/`.
+
+Both benchmarks take an output path override: `RAGAS_OUT=...` / `REPOQA_OUT=...`.
+
+### Benchmark results
+
+Run with the subscription's default model, judge `sonnet`. This compared Claude Code's
+built-in tools against Cortex's former 9 hand-written tools (since removed):
+
+| | Built-in tools (current) | 9 custom tools (removed) |
+|---|---|---|
+| RepoQA: right function **and** file (10 tasks, TypeScript + Python) | 10/10 | 10/10 |
+| RAGAS faithfulness | 0.870 | 0.872 |
+| RAGAS answer relevancy | 0.960 | 0.962 |
+| RAGAS context relevance | 0.850 | 0.856 |
+| Honest "not found" (negative control) | 1.0 | 1.0 |
+
+The modes are equal within noise: per-question scores swing both ways (±0.25) on a
+5-question set. Cortex now uses only the built-in tools, because Anthropic maintains them.
+
+**How the judge sees sources.** Agents cite `file.py:42`, so the RAGAS judge is shown each
+cited file **from disk with numbered lines**. Without numbers, the judge can't check
+line references and marks correct answers as unsupported: an earlier run scored
+`builtin` 0.80 faithfulness for exactly this reason.
+
+**Rate limits.** A long benchmark can exhaust the subscription's quota; RepoQA then
+reports `rate_limit (exhausted retries)` for those tasks. Wait for the limit to reset
+and re-run, and increase `REPOQA_PACE_S` (seconds between questions).
+
+---
+
+## CI
+
+`.github/workflows/ci.yml` installs the requirements and runs `python -m pytest -q` on every
+push and pull request. A failing test blocks the build. The live benchmarks are not in CI,
+because they need a Claude login and cost subscription usage.
+
+## When something fails
+
+| Symptom | Likely cause | Where to look |
+|---|---|---|
+| `AssertionError: test tried to call Claude` | A test runs an agent flow without `fake_agent` | Add the `fake_agent` fixture to the test |
+| A chat source is missing or extra | Grounding rule changed | `cited_paths` in `cortex/agents/loop.py`; `_build_response` in `cortex/agents/chat.py` |
+| A tour stop or walkthrough file is dropped | Path not indexed, or the scripted agent never "read" it | `resolve_indexed_path` in `cortex/agents/loop.py`; the test's `reads` list |
+| RAGAS faithfulness drops after a prompt change | The prompt lets the agent answer from memory | The system prompt at the top of `cortex/agents/chat.py` / `tour.py` / `walkthrough.py` |
+| RAGAS says namespace not indexed | The probe's namespace isn't ingested | Ingest with `-n cortex` (see above) |

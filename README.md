@@ -1,6 +1,6 @@
 # Cortex
 
-**Understand any codebase by asking it questions — answered only from the real code, with exact file-and-line citations, or an honest "I couldn't find it."**
+**Understand any codebase by asking it questions — answered only from the real code, with exact file-and-line "**
 
 > **docs/** — [Architecture](docs/architecture.md) · [API Reference](docs/api.md) · [Eval Guide](docs/eval-guide.md) · [Limitations](docs/limitations.md)
 
@@ -12,12 +12,13 @@ Point it at a project — a folder on your machine, or a git/Bitbucket link — 
 
 - **Answer your questions** about the code, and show you the exact files and lines the
   answer came from. If it can't find something, it says so instead of making it up.
-- **Walk you through a guided tour** — starting at the file where the app actually begins,
-  then following how each piece connects to the next.
-- **Write you a full project walkthrough** — a long, plain-English deep dive of the whole
-  codebase (stack → how it starts → routing → features → business logic → data → shared
-  building blocks → how it all connects → how to run), tailored to the framework it
-  detects. Read it in the app or **save it as a PDF / Markdown** to share.
+- **Walk you through a guided tour** — an agent explores the repo, confirms where the app
+  actually begins, and designs chapters and stops that fit *this* project, then follows how
+  each piece connects to the next.
+- **Write you a full project walkthrough** — a long, plain-English deep dive whose outline
+  is designed per project: a planner agent investigates the repo and picks the sections
+  that matter for it, then a writer agent per section investigates further and writes it.
+  Read it in the app or **save it as a PDF / Markdown** to share.
 - **Tell you what to install first** — the runtimes and tools you need before the project
   will even run.
 
@@ -36,8 +37,8 @@ search index — and to reconstruct each answer's sources from the files it actu
 flowchart TD
     A["Access — REST API · CLI · Web UI"] --> B["Front door — routes the question"]
     B --> C{{"Claude Agent SDK — owns the tool-use loop"}}
-    C <-->|"plan → call tool → read → repeat"| T["9 read-only tools<br/>search · read · grep · symbols · deps · call-graph · AST"]
-    T <--> I[("Search index · .kt_index")]
+    C <-->|"plan → call tool → read → repeat"| T["Claude Code's Read · Grep · Glob<br/>+ Cortex search_code"]
+    T <--> I[("Repo files + search index")]
     C --> R["Grounded answer — cites file:line, or honest 'not found'"]
 
     subgraph Ingest ["Ingest · once per repo"]
@@ -59,12 +60,12 @@ history saved to a database. Without it, chat history is kept in local JSON file
 automatically; nothing to install. Then:
 
 ```powershell
-cd onboarding-brain
+cd cortex
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
 # One-time: log in with your Claude Pro/Max subscription (see "Authentication" below)
-claude            # opens a browser; sign in; credentials are saved to ~/.claude
+claude setup-token           # opens a browser; sign in; credentials are saved to ~/.claude
 
 # Start the app (web page + API)
 .\.venv\Scripts\python.exe -m uvicorn api.server:app --port 8000
@@ -114,8 +115,8 @@ chosen in this order, first match wins:
 2. `CLAUDE_CODE_OAUTH_TOKEN`  ← the `setup-token` token, if you used that method
 3. **Subscription login from `~/.claude/.credentials.json`**  ← the normal path
 
-As a safeguard, Cortex **refuses to start** if `ANTHROPIC_API_KEY` is set, unless you explicitly
-opt in with `ONBOARDING_CLAUDE_SDK_ALLOW_API_KEY=1`. To verify your login any time:
+Cortex runs **only** on your subscription: it **refuses to run** whenever `ANTHROPIC_API_KEY`
+is set, so it can never bill the API. To verify your login any time:
 
 ```powershell
 claude --version          # CLI present?
@@ -176,7 +177,6 @@ The main endpoints:
 | `POST /v1/ask` | Ask a question, get a sourced answer |
 | `GET /v1/tour/{repo}` | Get the guided tour |
 | `POST/GET /v1/walkthrough/{repo}` | Start / fetch the full project walkthrough |
-| `GET /v1/gaps/{repo}` | See which files are confusing and worth documenting |
 | `POST /v1/agents/{id}/run` | Run a specific helper (install-guide) |
 | `GET /v1/namespaces`, `GET /v1/agents`, `GET /health` | List repos, list helpers, health check |
 
@@ -191,15 +191,16 @@ Cortex is really a few small, focused helpers ("agents") that share the same bra
 
 - **Install guide** — the tools and versions you need, pulled from the project's own
   config files.
-- **Chat** (`kt-agent-v1`) — ask anything; an AI agent that reasons over 9 tools
-  (search, read, grep, symbol lookup, dependency parsing, call graphs, AST-level search)
-  and cites the exact files and lines each answer came from.
-- **Guided tour** — a "read these files, in this order" path through the code, with a
-  one-line plain-English insight on each stop explaining what it does and why it matters.
-- **Project walkthrough** — the long-form, framework-aware deep dive you can save as PDF,
-  with a "Key takeaways" summary and a "read this next" pointer on every section.
-- **Gap finder** — points out the files that are central but hard to understand, so the
-  team can write down what they're for.
+- **Chat** (`kt-agent-v1`) — ask anything; an AI agent that reads the code with Claude
+  Code's own tools (Read, Grep, Glob) plus Cortex's index search, and cites the exact
+  files and lines each answer came from.
+- **Guided tour** — an agent (same tools) designs a "read these files, in this order"
+  path for this specific repo, with a plain-English insight on each stop. Connections
+  between stops come from the real import graph.
+- **Project walkthrough** — planner agent + parallel writer agents produce a long-form
+  deep dive with project-specific sections and a "Key takeaways" summary on each; save
+  it as PDF. If an agent run fails, you get a clear error to retry (no fake fallback).
+
 
 Each helper sticks to its job and only talks about the repo you gave it.
 
@@ -210,8 +211,8 @@ Each helper sticks to its job and only talks about the repo you gave it.
 This is the part that matters most for onboarding — wrong answers are worse than none.
 
 - **It only uses your code.** Answers are built from the actual files it read, and it
-  double-checks that every file it cites really exists. Made-up references are caught and
-  flagged.
+  only lists a file as a source if the answer names it **and** the agent actually opened
+  it. A made-up file name can never show up as a source.
 - **It admits when it doesn't know.** If nothing relevant turns up, it says "I couldn't
   find this in the indexed code" instead of guessing.
 - **It ignores sneaky instructions.** If a README or code comment contains text like
@@ -245,6 +246,7 @@ Everything is controlled by environment variables, with safe defaults so it just
 |---|---|---|---|
 | The agent | `ONBOARDING_LLM_BACKEND` | `claude_sdk` (only) | `claude_sdk` |
 | Agent model | `CLAUDE_SDK_MODEL` | blank (subscription default) or a model id | blank |
+| Where cloned repos are kept | `ONBOARDING_REPOS_DIR` | a folder (use a persistent volume on a server) | `.kt_repos` |
 | How it searches | `ONBOARDING_VECTOR_BACKEND` | `tfidf` (fast), `dense`, `hybrid` (smartest) | `tfidf` |
 | Where chat history lives | `ONBOARDING_CHAT_STORE` | `auto`, `json`, `mongo` | `auto` |
 | API keys | `ONBOARDING_API_KEYS` | comma-separated keys | `dev-local-key` |
@@ -264,24 +266,19 @@ blank to use the subscription's default model, or set a specific model id.
 
 ## Testing and quality checks
 
-Two commands tell you everything's healthy:
-
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q          # the test suite
-.\.venv\Scripts\python.exe -m evals.runner       # the quality gate (20 checks)
+.\.venv\Scripts\python.exe -m pytest -q          # the test suite (no Claude calls)
 ```
 
-The **quality gate** is how we make sure changes don't quietly break things. It spins up
-tiny throwaway sample repos, runs every helper against them, and checks the results — e.g.
-"did chat find the right file?", "did the tour start at the real entry file?", "were
-made-up sources caught?". It covers every helper (chat 9, tour 5, walkthrough 3,
-install 3) and writes a report to `evals/results.json`.
+The tests never call Claude. Every agent run goes through one function
+(`run_tool_agent`), and the tests swap it for a **scripted agent** that opens files
+through the real tools and returns a scripted reply. That checks everything around the
+model: grounded sources, invented paths being dropped, honest "not found", failures
+reported clearly, the API contracts. CI runs it on every push (`.github/workflows/ci.yml`).
 
-If any check fails, the command exits with an error — so it can run automatically on every
-code change (it does, via `.github/workflows/ci.yml`) and block anything that regresses.
-
-Reading the report: `gate_passed: true` means all good. If something failed, open that
-case in `results.json` and the failing check explains exactly what went wrong.
+To measure the *real* agent's answer quality, run the live benchmarks (they use your
+Claude login): `python -m evals.ragas_eval` and `python -m evals.repoqa_eval`. See
+[docs/eval-guide.md](docs/eval-guide.md).
 
 ---
 
@@ -298,8 +295,8 @@ to keep in mind if you deploy it more widely:
   every single file.
 - **"Who owns what" is approximate.** Ownership comes from who commits most to each folder,
   not line-by-line history.
-- **Answer quality is checked structurally, not stylistically.** The quality gate verifies
-  the right files and grounding; it doesn't yet grade how well-written an answer reads.
+- **The test suite doesn't judge the model.** It checks the rules around the agents; answer
+  quality is measured by the live benchmarks, which you run by hand.
 - **Requires a Claude subscription login.** Run `claude setup-token` (or `claude` to log in)
   once so the Agent SDK can use your Pro/Max subscription. No billed API key is needed; keep
   `ANTHROPIC_API_KEY` unset.
