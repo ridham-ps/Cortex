@@ -30,16 +30,25 @@ def repo_ns():
 
 # ---- chat agent -------------------------------------------------------------
 
-def test_chat_sources_are_files_named_and_read(repo_ns, fake_agent):
+def test_chat_sources_are_cited_files_the_agent_read(repo_ns, fake_agent):
     from cortex.agents.chat import ask, load_chat_history
 
     fake_agent.reads = ["etl/main.py", "etl/extract.py", "etl/load.py"]
-    fake_agent.reply = ("Execution starts in `etl/main.py`, which calls `pull()` from "
-                        "`etl/extract.py`. It also mentions `etl/unused.py`.")
+    fake_agent.reply = {
+        "found": True,
+        "answer": "Execution starts in `etl/main.py`, which calls `pull()` from `etl/extract.py`.",
+        "sources": [
+            {"path": "etl/main.py", "line_start": 4, "line_end": 5},
+            {"path": "extract.py", "line_start": 1, "line_end": 2},      # partial path → resolved
+            {"path": "etl/unused.py", "line_start": 1, "line_end": 1},   # cited but never read
+            {"path": "etl/ghost.py", "line_start": 1, "line_end": 1},    # invented
+        ]}
     r = ask(AskRequest(namespace=repo_ns, question="where does the pipeline start?"))
 
-    # load.py was read but not named; unused.py was named but never read
-    assert {s.path for s in r.sources} == {"etl/main.py", "etl/extract.py"}
+    assert [s.path for s in r.sources] == ["etl/main.py", "etl/extract.py"]
+    main = r.sources[0]
+    assert (main.line_start, main.line_end) == (4, 5)          # Claude's exact line range
+    assert main.snippet == "if __name__ == '__main__':\n    push(pull())"   # from the file
     assert r.grounded is True and r.validation_status == "passed"
     assert r.trace.agent_id == "kt-agent-v1" and r.trace.grounding["tool_calls"] == 3
     turns = load_chat_history(repo_ns)
@@ -50,9 +59,19 @@ def test_chat_not_found_has_no_sources(repo_ns, fake_agent):
     from cortex.agents.chat import ask
 
     fake_agent.reads = ["etl/main.py"]
-    fake_agent.reply = "I couldn't find this in the indexed code. There is no payment module."
+    fake_agent.reply = {"found": False, "sources": [],
+                        "answer": "I couldn't find this in the indexed code. There is no payment module."}
     r = ask(AskRequest(namespace=repo_ns, question="how are payments processed?"))
     assert r.sources == [] and r.grounded is False
+
+
+def test_chat_with_no_answer_says_so_clearly(repo_ns, fake_agent):
+    from cortex.agents.chat import NO_ANSWER, ask
+
+    fake_agent.reply = "ran out of turns"   # no structured output
+    r = ask(AskRequest(namespace=repo_ns, question="where does it start?"))
+    assert r.answer == NO_ANSWER and r.grounded is False
+    assert "no_answer" in r.trace.errors and r.validation_status == "warning"
 
 
 def test_chat_greeting_skips_the_agent(repo_ns, fake_agent):
@@ -151,8 +170,10 @@ def test_walkthrough_plans_its_own_sections(repo_ns, fake_agent):
                 {"key": "run", "title": "Running it", "goal": "How to run", "files": ["etl/main.py"]},
             ]}
         return {"explanation": "Execution starts in `etl/main.py`, which calls **pull** "
-                               "from `etl/extract.py`. It also mentions `etl/load.py`.",
-                "takeaways": ["main.py drives the run"]}
+                               "from `etl/extract.py`.",
+                "takeaways": ["main.py drives the run"],
+                # load.py was never read, ghost.py doesn't exist: both must be dropped
+                "files": ["etl/main.py", "etl/extract.py", "etl/load.py", "etl/ghost.py"]}
 
     fake_agent.reply = reply
     doc = build_walkthrough(repo_ns)
@@ -162,7 +183,7 @@ def test_walkthrough_plans_its_own_sections(repo_ns, fake_agent):
         "What this pipeline does", "Extract stage", "Running it"]
     assert doc["stack"] == ["Python"] and doc["generated_with"].endswith("(agent)")
     for s in doc["sections"]:
-        # only files the writer both opened AND named; load.py was named but never read
+        # only files the writer cited that are real AND were read
         assert set(s["files"]) == {"etl/main.py", "etl/extract.py"}
         assert s["takeaways"] == ["main.py drives the run"]
 

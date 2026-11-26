@@ -70,8 +70,9 @@ PLANNER_SCHEMA = {
     "type": "object",
     "required": ["stack", "sections"],
     "properties": {
-        "stack": {"type": "array", "items": {"type": "string"},
-                  "description": "the project's main languages and frameworks"},
+        "stack": {"type": "array", "items": {"type": "string", "maxLength": 30},
+                  "description": "the project's main languages and frameworks as short "
+                                 "names only, e.g. \"Python\", \"FastAPI\" (max 6)"},
         "sections": {"type": "array", "items": {
             "type": "object",
             "required": ["key", "title", "goal", "files"],
@@ -87,11 +88,13 @@ PLANNER_SCHEMA = {
 
 WRITER_SCHEMA = {
     "type": "object",
-    "required": ["explanation", "takeaways"],
+    "required": ["explanation", "takeaways", "files"],
     "properties": {
         "explanation": {"type": "string", "description": "the section, in Markdown"},
         "takeaways": {"type": "array", "items": {"type": "string"},
                       "description": "2-3 key points, under 15 words each"},
+        "files": {"type": "array", "items": {"type": "string"},
+                  "description": "repo-relative paths of the files you read that this section relies on"},
     },
 }
 
@@ -244,6 +247,7 @@ def _write_section(ns: str, store, known: set[str], settings: Settings,
     if idx < _WRITER_WORKERS:
         time.sleep(idx * _WRITER_STAGGER_S)
     ex = ToolExecutor(namespace=ns, store=store)
+    reply: dict = {}
     body, takeaways = "", []
     try:
         reply, _ = loop.run_tool_agent(
@@ -256,9 +260,10 @@ def _write_section(ns: str, store, known: set[str], settings: Settings,
 
     if not body:
         body = "_The writer agent could not complete this section. Regenerate the walkthrough to retry._"
-    # grounded sources: files the writer both opened and named in its text
-    cited = sorted(loop.cited_paths(body, ex.used_paths & known))
-    files = cited or [f for f in section["files"] if f in ex.used_paths] or section["files"]
+    # sources: the files the writer says it relied on, kept only if real AND read
+    cited = [loop.resolve_indexed_path(f, known) for f in reply.get("files", [])]
+    files = list(dict.fromkeys(p for p in cited if p and p in ex.used_paths)) \
+        or [f for f in section["files"] if f in ex.used_paths] or section["files"]
     return {"key": section["key"], "title": section["title"], "body": body,
             "takeaways": takeaways, "files": files[:8]}
 

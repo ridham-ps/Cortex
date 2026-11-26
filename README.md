@@ -244,7 +244,6 @@ Everything is controlled by environment variables, with safe defaults so it just
 
 | What | Setting | Choices | Default |
 |---|---|---|---|
-| The agent | `ONBOARDING_LLM_BACKEND` | `claude_sdk` (only) | `claude_sdk` |
 | Agent model | `CLAUDE_SDK_MODEL` | blank (subscription default) or a model id | blank |
 | Where cloned repos are kept | `ONBOARDING_REPOS_DIR` | a folder (use a persistent volume on a server) | `.kt_repos` |
 | How it searches | `ONBOARDING_VECTOR_BACKEND` | `tfidf` (fast), `dense`, `hybrid` (smartest) | `tfidf` |
@@ -254,9 +253,10 @@ Everything is controlled by environment variables, with safe defaults so it just
 ### LLM backend (Claude Agent SDK)
 
 Cortex runs on the **Claude Agent SDK** ([claude-agent-sdk](https://pypi.org/project/claude-agent-sdk/)).
-The SDK runs the tool-use loop; Cortex provides its 9 code-aware tools as an in-process MCP server,
-restricted to read-only access over the indexed code (no filesystem or shell access). Chat,
-chat, install guide, tour, and walkthrough all use this backend.
+The SDK runs the tool-use loop. The agents (chat, tour, walkthrough) read the code with
+Claude Code's own Read / Grep / Glob, fenced to the repo folder, plus Cortex's
+`search_code` over the index. They have no shell and cannot modify anything. The install
+guide doesn't use Claude at all.
 
 It authenticates with your **Claude Pro/Max subscription over OAuth** — see
 [Authentication](#authentication--how-the-claude-login-works) above. Leave `CLAUDE_SDK_MODEL`

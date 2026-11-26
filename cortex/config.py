@@ -22,12 +22,7 @@ def _int(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class Settings:
-    # The only backend. Cortex runs on the Claude Agent SDK (claude-agent-sdk): the
-    # SDK runs the tool-use loop and the app provides the 9 code-aware tools as an
-    # in-process MCP server.
-    backend: str = field(default_factory=lambda: os.getenv("ONBOARDING_LLM_BACKEND", "claude_sdk").lower())
-
-    # --- Claude Agent SDK backend (the only backend) ---
+    # --- Claude (always via the Claude Agent SDK, on your subscription) ---
     # Drives the bundled Claude Code CLI via the claude-agent-sdk. Authenticates
     # with a Claude Pro/Max SUBSCRIPTION over OAuth — no billed API key. Either
     # run `claude setup-token` and set CLAUDE_CODE_OAUTH_TOKEN, or log in once

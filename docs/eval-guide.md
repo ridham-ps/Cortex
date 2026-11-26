@@ -145,7 +145,7 @@ because they need a Claude login and cost subscription usage.
 | Symptom | Likely cause | Where to look |
 |---|---|---|
 | `AssertionError: test tried to call Claude` | A test runs an agent flow without `fake_agent` | Add the `fake_agent` fixture to the test |
-| A chat source is missing or extra | Grounding rule changed | `cited_paths` in `cortex/agents/loop.py`; `_build_response` in `cortex/agents/chat.py` |
+| A chat source is missing or extra | Grounding rule changed | `_grounded_sources` in `cortex/agents/chat.py` |
 | A tour stop or walkthrough file is dropped | Path not indexed, or the scripted agent never "read" it | `resolve_indexed_path` in `cortex/agents/loop.py`; the test's `reads` list |
 | RAGAS faithfulness drops after a prompt change | The prompt lets the agent answer from memory | The system prompt at the top of `cortex/agents/chat.py` / `tour.py` / `walkthrough.py` |
 | RAGAS says namespace not indexed | The probe's namespace isn't ingested | Ingest with `-n cortex` (see above) |

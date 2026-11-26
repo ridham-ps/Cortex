@@ -85,7 +85,8 @@ def test_ingest_ask_namespaces_flow(fake_agent):
         assert any(n["namespace"] == "apitest" for n in nss)
 
         fake_agent.reads = ["src/auth.py"]
-        fake_agent.reply = "`login()` in `src/auth.py` delegates to `verify(u, p)`."
+        fake_agent.reply = {"found": True, "answer": "`login()` in `src/auth.py` delegates to `verify(u, p)`.",
+                            "sources": [{"path": "src/auth.py", "line_start": 1, "line_end": 1}]}
         ask = client.post("/v1/ask", json={"namespace": "apitest", "question": "how does login work?"}, headers=AUTH)
         assert ask.status_code == 200
         body = ask.json()
@@ -192,7 +193,8 @@ def test_chat_history_endpoints(fake_agent):
     try:
         client.post("/v1/ingest", json={"repo_path": str(repo), "namespace": "histapi", "rebuild": True}, headers=AUTH)
         fake_agent.reads = ["src/auth.py"]
-        fake_agent.reply = "`login()` lives in `src/auth.py`."
+        fake_agent.reply = {"found": True, "answer": "`login()` lives in `src/auth.py`.",
+                            "sources": [{"path": "src/auth.py", "line_start": 1, "line_end": 1}]}
         client.post("/v1/ask", json={"namespace": "histapi", "question": "how does login work?"}, headers=AUTH)
         turns = client.get("/v1/chat/histapi", headers=AUTH).json()["turns"]
         assert len(turns) == 2 and turns[0]["role"] == "user"

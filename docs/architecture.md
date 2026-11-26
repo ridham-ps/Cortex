@@ -95,14 +95,13 @@ were benchmarked against Cortex's former 9 hand-written tools and scored the sam
 
 | Agent | File | Turns | What it returns | How Python checks it |
 |---|---|---|---|---|
-| Chat (`kt-agent-v1`) | `agents/chat.py` | 12 (run retried up to 2×) | An answer in Markdown | Sources = files the answer **names** ∩ files the agent **read**; a "not found" answer gets no sources and `grounded: false` |
+| Chat (`kt-agent-v1`) | `agents/chat.py` | 12 (run retried up to 2×) | Structured output (`CHAT_SCHEMA`): `found`, Markdown `answer`, `sources` with line ranges | Sources = files Claude cited, kept only if indexed **and** read; `found: false` gives no sources and `grounded: false` |
 | Tour | `agents/tour.py` | 30 | Structured output (`TOUR_SCHEMA`): overview, entry point, chapters of stops | Stops kept only if indexed **and** seen by the agent; connections come from the import graph, not the model |
 | Walkthrough planner | `agents/walkthrough.py` | 30 | Structured output (`PLANNER_SCHEMA`): stack, 5–10 sections with files | Invented file paths dropped; fewer than 3 sections means failure |
-| Walkthrough writers | `agents/walkthrough.py` | 14 each, 4 in parallel | Structured output (`WRITER_SCHEMA`): explanation + takeaways | Section `files` = files the writer read **and** named |
+| Walkthrough writers | `agents/walkthrough.py` | 14 each, 4 in parallel | Structured output (`WRITER_SCHEMA`): explanation, takeaways, files | Section `files` = files the writer cited, kept only if real **and** read |
 | Install guide | `install_guide.py` | — (no LLM) | Setup steps + prerequisites | Fixed rules over config files |
 
-Each agent's system prompt (and, for tour and walkthrough, its JSON schema) is at the top
-of its own file. The schemas use the SDK's structured output (`output_format`): the SDK
+Each agent's system prompt and JSON schema are at the top of its own file. The schemas use the SDK's structured output (`output_format`): the SDK
 guarantees the shape, and Python only checks what a schema can't, namely that every path
 is real and was actually read. There is no fallback to a
 non-agent path: if an agent can't run or returns nothing usable, the API returns a 503

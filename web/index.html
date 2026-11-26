@@ -54,7 +54,6 @@
   /* interconnected knot mark (the "place of interest" symbol) */
   .knot{fill:none;stroke:url(#g);stroke-linecap:round;stroke-linejoin:round;stroke-width:6.5}
   .mark .knotsvg{width:38px;height:38px}
-  .glyph .knot{stroke-dasharray:1;stroke-dashoffset:1;animation:knotdraw 2s cubic-bezier(.4,0,.2,1) forwards}
 
   /* ---------- header ---------- */
   header{
@@ -186,12 +185,10 @@
     font-size:12.5px;color:var(--body);cursor:pointer;transition:border-color .15s,color .15s,background .15s;
     font-family:var(--f-ui)}
   .q-chip:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}
-  @keyframes knotdraw{to{stroke-dashoffset:0}}
   @keyframes knotloop{0%{stroke-dashoffset:1}55%{stroke-dashoffset:0}100%{stroke-dashoffset:-1}}
   @keyframes tlfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
   /* interactive ingest panel */
   .ingesting{margin-top:8vh;text-align:center;color:var(--muted)}
-  .ingesting .glyph{width:44px;height:44px;margin:0 auto 10px}
   .ingesting h2{font-family:var(--f-read);font-weight:600;font-size:18px;color:var(--text);margin:4px 0 16px}
   .isteps{display:flex;flex-direction:column;gap:0;text-align:left;max-width:280px;margin:0 auto}
   .istep{display:flex;gap:11px;align-items:flex-start}
@@ -211,7 +208,6 @@
   .istep.done .istep-label{color:var(--brand-ink)}
   .istep.done .istep-line{background:var(--brand)}
   .imeta{font-size:12px;max-width:380px;margin:14px auto 0;color:var(--muted)}
-  @keyframes spin{to{transform:rotate(360deg)}}
   @keyframes step-pulse{
     0%,100%{box-shadow:0 0 0 3px rgba(124,92,252,.22)}
     50%{box-shadow:0 0 0 6px rgba(124,92,252,.05)}
@@ -219,10 +215,6 @@
 
   .empty h2{font-family:var(--f-read);font-weight:600;font-size:26px;color:var(--text);margin:10px 0 8px;letter-spacing:-.01em}
   .empty p{font-size:14px;max-width:460px;margin:0 auto;color:var(--muted)}
-  .empty .kbd{
-    font-family:var(--f-mono);font-size:11px;background:var(--card);border:1px solid var(--line-strong);
-    border-bottom-width:2px;border-radius:6px;padding:1px 7px;color:var(--body);
-  }
 
   .turn{margin-bottom:20px;animation:msg .3s cubic-bezier(.2,.7,.2,1) both}
 
@@ -281,33 +273,6 @@
   .chip.ok{color:#22c55e;background:rgba(34,197,94,.13)}
   .chip.bad{color:var(--bad);background:var(--bad-soft)}
   .chip.info{color:#6366f1;background:rgba(99,102,241,.12)}
-  .chip.cited{color:var(--brand-ink);background:var(--brand-soft);padding:1px 9px;font-weight:600}
-
-  /* source panel — single file viewer, populated on wiring node click */
-  .src-panel{border-top:1px solid var(--line);background:var(--inset)}
-  .src-panel .sp-head{
-    display:flex; align-items:center; gap:9px; padding:8px 26px;
-    font-family:var(--f-mono); font-size:11.5px; min-width:0;
-  }
-  .src-panel .sp-path{color:var(--body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
-  .src-panel .sp-path bdi{unicode-bidi:plaintext}
-  .src-panel .lines{color:var(--faint);flex:none}
-  .src-panel .sym{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px;font-size:10.5px}
-  .src-panel .right{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
-  .meter{width:38px;height:3px;border-radius:2px;background:var(--line-strong);overflow:hidden}
-  .meter i{display:block;height:100%;background:var(--brand);border-radius:2px}
-  .src-panel .sp-close{
-    border:none;background:transparent;color:var(--faint);cursor:pointer;
-    padding:2px 7px;font-size:13px;line-height:1;flex:none;margin-left:4px;border-radius:5px;
-  }
-  .src-panel .sp-close:hover{color:var(--fg);background:rgba(255,255,255,.06)}
-  .src-panel pre{
-    margin:0 26px 14px; padding:12px 14px; overflow:auto; max-height:280px;
-    background:var(--code-bg); border:1px solid var(--line); border-radius:9px;
-    font-family:var(--f-mono); font-size:11px; line-height:1.6; color:var(--body); white-space:pre-wrap;
-    animation:reveal .22s ease both;
-  }
-  .src-panel .sp-empty{padding:12px 26px 16px;color:var(--muted);font-style:italic;font-size:12px}
   /* active wiring node gets a brand-color border glow */
   svg.wire .wnode.active .wn{stroke:var(--brand);stroke-width:2}
   /* guided tour */
@@ -583,7 +548,6 @@
     stroke:var(--brand);stroke-width:1.5;
     filter:drop-shadow(0 2px 8px rgba(100,60,20,.3))}
   svg.wire .wnode.active .wn{stroke:var(--brand);stroke-width:1.5}
-  svg.wire .wchip{pointer-events:none}
   svg.wire .we-lbl{pointer-events:none;opacity:0;transition:opacity .14s}
   svg.wire .we-lbl.show{opacity:1}
   @keyframes wedraw{from{stroke-dasharray:0 1;opacity:0}to{stroke-dasharray:1 0;opacity:1}}
@@ -642,13 +606,10 @@
 
   @keyframes blink{50%{opacity:0}}
   @keyframes msg{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
-  @keyframes cxdraw{to{stroke-dashoffset:0}}
   @keyframes cxpop{to{transform:scale(1)}}
   @media (prefers-reduced-motion: reduce){
     *,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}
-    .glyph .knot{stroke-dashoffset:0 !important;animation:none}
   }
-  /* very short windows: give up the app-shell and let the page scroll */
   @media (max-height: 560px){
     body{overflow:auto}
     #app{height:auto;min-height:100vh}
@@ -663,7 +624,6 @@
   }
   .nav-toggle:hover{color:var(--text);border-color:var(--brand)}
   .nav-backdrop{display:none}
-  /* touch screens have no hover, so keep the copy button visible */
   @media (hover: none){ .copy-btn{opacity:1} }
 
   @media (max-width: 900px){
@@ -685,7 +645,6 @@
     .bar-form .btn{flex:0 0 auto;padding:9px 18px}
     .brand .tag{display:none}
     .sys #sysline{display:none}
-    .src-panel .sym{display:none}
     .chat-top{padding:8px 14px;flex-wrap:wrap;row-gap:6px}
     .chat-top #nsMeta{display:none}
     #msgs{padding:16px 12px 12px}
@@ -695,8 +654,7 @@
     .user-bubble{max-width:85%}
     .answer{padding:12px 14px;font-size:14.5px}
     .ans-meta,.src-bar,.src-card-head,.srcs-h{padding-left:14px;padding-right:14px}
-    .src-panel .sp-head{padding:8px 14px}
-    .src-panel pre,.src-snippet pre{margin-left:10px;margin-right:10px}
+    .src-snippet pre{margin-left:10px;margin-right:10px}
     .fv-overlay{padding:10px}
     .fv-modal{width:100%;max-height:92dvh}
     #toasts{left:12px;right:12px;bottom:12px;max-width:none}
@@ -755,9 +713,6 @@
   /* sidebar */
   [data-theme="light"] aside{background:#eceef2;border-right-color:#dde0e8}
   [data-theme="light"] .sec-h{color:var(--muted)}
-  /* nav items */
-  [data-theme="light"] .ns-item:hover{background:rgba(91,56,204,.07)}
-  [data-theme="light"] .ns-item.active{background:rgba(91,56,204,.11);color:var(--brand)}
   /* chat bubbles */
   [data-theme="light"] .user-bubble{background:#ede9ff;border-color:#d4caef;color:#1c1830}
   [data-theme="light"] .user-av{background:#e2dcf8;border-color:#ccc4ee}
@@ -841,7 +796,6 @@
   [data-theme="light"] .src-snippet pre,[data-theme="light"] .fv-modal{border-radius:14px !important}
   [data-theme="light"] .tour-stop{border-radius:16px !important}
   [data-theme="light"] .ans-meta{border-radius:0}
-  [data-theme="light"] .ns-item{border-radius:10px !important}
 </style>
 </head>
 <body>

@@ -110,7 +110,7 @@ def run_model(model: str, judge) -> dict:
             rows.append({"id": q["id"], "error": str(exc)})
             continue
         # Contexts = what the agent actually grounded on. The cited sources only
-        # carry a short snippet, but the agent read the full files via read_file —
+        # carry a short snippet, but the agent read the full files —
         # so pull fuller file content for a fair faithfulness judgement.
         contexts = []
         for s in r.sources:

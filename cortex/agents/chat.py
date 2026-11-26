@@ -4,12 +4,13 @@
       │  "hi" / "thanks"?  → canned reply, Claude is not called
       │  prompt = last 6 chat turns + the question
       ▼
-    loop.run_tool_agent(CHAT_SYSTEM_PROMPT, prompt, max 12 turns)
-      │  Claude searches and reads the code (Read/Grep/Glob/search_code), then answers
+    loop.run_tool_agent(CHAT_SYSTEM_PROMPT, prompt, CHAT_SCHEMA, max 12 turns)
+      │  Claude searches and reads the code (Read/Grep/Glob/search_code), then
+      │  answers in CHAT_SCHEMA's shape: {found, answer, sources[path, lines]}
       ▼
     _build_response()
-      │  "not found" answer  → no sources, grounded = False
-      │  otherwise sources   = files the answer NAMES ∩ files the agent READ
+      │  found = false  → no sources, grounded = False
+      │  otherwise sources = the files Claude cited, kept only if indexed AND read
       ▼
     AskResponse {answer, sources, grounded, wiring, trace}  (+ saved to chat history)
 """
@@ -29,7 +30,6 @@ from cortex.trace import append_trace, log_event, new_trace_id, timed
 AGENT_ID = "kt-agent-v1"
 MAX_TURNS = 12          # tool-using rounds Claude gets per question
 MAX_RUN_RETRIES = 2     # the whole run is retried this many times on a crash
-NOT_FOUND = "I couldn't find this in the indexed code."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The chat agent's system prompt — goal-oriented, tool-first
@@ -58,12 +58,13 @@ RULES:
     must come from code you read — never from general knowledge.
   • Be concrete: name functions, classes, variables, exact file paths.
   • Cite sources inline: "In `src/main.ts`..." not vague statements.
+  • In `sources`, list every file your answer relies on, with the line range you
+    relied on (Read shows line numbers). Only files you actually opened.
   • If the codebase genuinely contains nothing relevant after a thorough search,
-    you MUST BEGIN your reply with this exact line, on its own:
+    set `found` to false, BEGIN the answer with this exact line, on its own:
         I couldn't find this in the indexed code.
-    Then, below it, briefly say what you searched for and (optionally) suggest
-    what the user might mean. Do NOT cite files as if they were evidence for a
-    thing that isn't there — a "not found" answer has no sources.
+    then briefly say what you searched for and (optionally) what the user might
+    mean — and leave `sources` empty: a "not found" answer has no sources.
 
 GENERAL NOTE — separating your knowledge from the repo's:
   • Keep the main answer strictly grounded in the code you read.
@@ -92,6 +93,31 @@ OUTPUT STYLE:
   • Aim for the length a senior engineer would write in a Slack message:
     enough to be precise, short enough to be read in 30 seconds.
 """
+
+# The shape of every chat answer. The SDK makes the agent's final answer match it
+# (structured output), so "was it found?" and "which files and lines?" come
+# straight from Claude instead of being guessed from the answer's wording.
+CHAT_SCHEMA = {
+    "type": "object",
+    "required": ["found", "answer", "sources"],
+    "properties": {
+        "found": {"type": "boolean",
+                  "description": "false if the repo has nothing relevant to the question"},
+        "answer": {"type": "string",
+                   "description": "the answer in Markdown, incl. any General note section"},
+        "sources": {"type": "array", "items": {
+            "type": "object",
+            "required": ["path", "line_start", "line_end"],
+            "properties": {
+                "path": {"type": "string", "description": "repo-relative path of a file you read"},
+                "line_start": {"type": "integer", "minimum": 1},
+                "line_end": {"type": "integer", "minimum": 1},
+            }},
+            "description": "the files (and line ranges) the answer relies on; empty if not found"},
+    },
+}
+NO_ANSWER = ("The agent stopped before finishing an answer (it may have run out of steps). "
+             "Please try again, or ask a narrower question.")
 
 # Greetings and small talk get a canned reply — no need to run the agent.
 _CONVERSATIONAL_RE = re.compile(
@@ -142,16 +168,16 @@ def ask(request: AskRequest, *, settings: Optional[Settings] = None,
     prompt = (f"Previous conversation:\n{convo}\n" if convo else "") + request.question
 
     executor = ToolExecutor(namespace=namespace, store=store)
-    answer, turns = NOT_FOUND, 0
+    reply, turns = {}, 0
     # A crash (CLI died, network blip) is retried; only the final failure is
     # recorded, so a run that recovers still validates as "passed".
     with timed() as t:
         for attempt in range(MAX_RUN_RETRIES + 1):
             try:
-                text, turns = loop.run_tool_agent(
+                reply, turns = loop.run_tool_agent(
                     executor, CHAT_SYSTEM_PROMPT, prompt, max_turns=MAX_TURNS,
-                    settings=settings, event_callback=cb, errors=errors)
-                answer = text or NOT_FOUND
+                    settings=settings, event_callback=cb, errors=errors,
+                    output_schema=CHAT_SCHEMA)
                 break
             except loop.AgentUnavailableError:
                 raise  # misconfiguration — retrying can't help
@@ -159,8 +185,10 @@ def ask(request: AskRequest, *, settings: Optional[Settings] = None,
                 cb({"type": "error_iter", "message": str(exc), "retry": attempt + 1})
                 if attempt == MAX_RUN_RETRIES:
                     errors.append(f"agent_failed:{exc}")
+    if not reply:
+        errors.append("no_answer")
 
-    return _build_response(request, settings, store, namespace, executor, answer,
+    return _build_response(request, settings, store, namespace, executor, reply,
                            trace_id=trace_id, errors=errors, turns=turns, duration_ms=t["ms"])
 
 
@@ -177,17 +205,14 @@ def clear_chat_history(namespace: str, *, settings: Optional[Settings] = None) -
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_response(request: AskRequest, settings: Settings, store, namespace: str,
-                    executor: ToolExecutor, answer: str, *, trace_id: str, errors: list[str],
+                    executor: ToolExecutor, reply: dict, *, trace_id: str, errors: list[str],
                     turns: int, duration_ms: int) -> AskResponse:
-    """Sources, wiring diagram, trace and chat history from what the agent read."""
-    # Sources = files the answer actually NAMES ∩ files the agent READ — not every
-    # file a search happened to surface. A "not found" answer gets no sources.
-    is_not_found = _looks_like_not_found(answer)
-    if is_not_found:
-        sources: list[Source] = []
-    else:
-        cited = loop.cited_paths(answer, executor.used_paths)
-        sources = _sources_from_executor(executor, store, namespace, only=cited or None)
+    """Sources, wiring diagram, trace and chat history from the agent's answer."""
+    answer = reply.get("answer", "").strip() or NO_ANSWER
+    # Sources = the files Claude says the answer relies on, kept only if each is a
+    # real indexed file the agent actually READ. "Not found" gets no sources.
+    sources = _grounded_sources(reply.get("sources", []), executor, store, namespace) \
+        if reply.get("found") else []
     grounded = bool(sources)
 
     wiring = None
@@ -250,49 +275,35 @@ def _conversational_response(namespace: str, settings: Settings) -> AskResponse:
     )
 
 
-# Phrases that signal the agent concluded the thing doesn't exist in the repo.
-# Anchored to the answer's opening so a passing "there is no X, instead Y" mid-
-# answer doesn't trip it. The primary signal is the NOT_FOUND sentence the prompt
-# asks the agent to lead with; this catches the model phrasing it its own way.
-_REPO = r"(?:code\s?base|repo(?:sitory)?|project|app(?:lication)?|source\s+code|code)"
-_NOT_FOUND_RE = re.compile(
-    r"i\s+(?:couldn'?t|could\s+not|did\s*n'?t|was\s+un(?:able)?\s*to)\s+find"
-    r"|there\s+(?:is|are|'s)\s+no\b[^.]{0,90}?\banywhere\b"
-    r"|there\s+(?:is|are|'s)\s+no\b[^.]{0,90}?\bin\s+(?:this|the|the\s+entire)\s+" + _REPO + r"\b"
-    r"|\b(?:does|do)\s*n'?t\s+exist\b"
-    r"|\b(?:does|do)\s*n'?t\s+appear\b[^.]{0,40}?\b(?:anywhere|in\s+(?:this|the)\s+" + _REPO + r")\b"
-    r"|\bno\s+(?:such|concept\s+of|notion\s+of|mention\s+of|trace\s+of)\b"
-    r"|\b(?:isn'?t|aren'?t)\s+(?:a\s+thing|anywhere)\b"
-    r"|\bnot\s+a\s+thing\b",
-    re.IGNORECASE,
-)
-
-
-def _looks_like_not_found(answer: str) -> bool:
-    """True if the answer is essentially 'this isn't in the repo'."""
-    head = (answer or "").strip()[:300]
-    if head.lower().startswith("i couldn't find"):
-        return True
-    return bool(_NOT_FOUND_RE.search(head))
-
-
-def _sources_from_executor(executor: ToolExecutor, store, namespace: str,
-                           only: Optional[set[str]] = None) -> list[Source]:
-    """Source entries (path, line range, snippet) for files the agent accessed;
-    `only` restricts them to a subset, e.g. the files the answer cited."""
-    paths = executor.used_paths if only is None else (executor.used_paths & only)
-    sources = []
-    for path in sorted(paths):
-        if path in loop.PSEUDO_PATHS:
+def _grounded_sources(cited: list[dict], executor: ToolExecutor, store,
+                      namespace: str) -> list[Source]:
+    """The sources Claude cited, kept only if each is a real indexed file that
+    the agent actually saw (executor.used_paths). The snippet is the cited line
+    range, taken from the file itself."""
+    known = store.known_paths(namespace) - loop.PSEUDO_PATHS
+    sources: list[Source] = []
+    seen: set[str] = set()
+    for c in cited:
+        path = loop.resolve_indexed_path(c["path"], known)
+        if not path or path in seen or path not in executor.used_paths:
             continue
-        chunk = store.first_chunk(namespace, path)
-        if not chunk:
-            continue
-        m = chunk.get("metadata", {})
+        seen.add(path)
+        chunk = store.first_chunk(namespace, path) or {}
+        start = max(1, c["line_start"])
+        end = max(start, c["line_end"])
         sources.append(Source(
-            path=path, language=m.get("language", ""),
-            line_start=int(m.get("line_start", 0)), line_end=int(m.get("line_end", 0)),
-            score=1.0, snippet=(chunk.get("text", "") or "")[:400],
-            symbol=str(m.get("symbol", "")), used=True,
+            path=path, language=chunk.get("metadata", {}).get("language", ""),
+            line_start=start, line_end=end, score=1.0, used=True,
+            snippet=_lines(namespace, path, start, end) or (chunk.get("text", "") or "")[:400],
         ))
     return sources
+
+
+def _lines(namespace: str, path: str, start: int, end: int) -> str:
+    """Lines start..end of a repo file, from disk (max 400 chars)."""
+    from cortex.index.ingest import repo_folder
+    try:
+        text = (repo_folder(namespace) / path).read_text(encoding="utf-8", errors="replace")
+    except (ValueError, OSError):
+        return ""
+    return "\n".join(text.splitlines()[start - 1:end])[:400]

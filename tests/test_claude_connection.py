@@ -12,7 +12,7 @@ from cortex.config import get_settings
 
 
 def _sdk_settings():
-    return dataclasses.replace(get_settings(), backend="claude_sdk")
+    return get_settings()
 
 
 # ── config plumbing ──────────────────────────────────────────────────────────

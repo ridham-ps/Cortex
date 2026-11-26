@@ -295,17 +295,3 @@ def resolve_indexed_path(raw: str, known: set[str]) -> Optional[str]:
         return p
     hits = [k for k in known if k.endswith("/" + p)]
     return hits[0] if len(hits) == 1 else None
-
-
-def cited_paths(answer: str, candidates: set[str]) -> set[str]:
-    """Of the files the agent saw (`candidates`), the ones its text actually
-    names — by full path or file name. This is what makes sources honest: a file
-    counts only if the agent both read it AND used it in the answer."""
-    text = (answer or "").lower()
-    hits = set()
-    for p in candidates:
-        pl = p.lower()
-        base = pl.rsplit("/", 1)[-1]
-        if pl in text or (base and base in text):
-            hits.add(p)
-    return hits

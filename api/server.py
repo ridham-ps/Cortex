@@ -111,8 +111,7 @@ async def home() -> HTMLResponse:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    s = get_settings()
-    return {"status": "ok", "agent_id": AGENT_ID, "version": __version__, "backend": s.backend}
+    return {"status": "ok", "agent_id": AGENT_ID, "version": __version__, "backend": "claude_sdk"}
 
 
 @app.get("/v1/agents")

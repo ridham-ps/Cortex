@@ -71,11 +71,10 @@ def namespaces():
 
 @app.command()
 def info():
-    """Print agent + backend configuration."""
-    s = get_settings()
+    """Print the agent configuration."""
     typer.echo(json.dumps({
-        "agent_id": AGENT_ID, "version": __version__,
-        "backend": s.backend, "model_used": s.model_used,
+        "agent_id": AGENT_ID, "version": __version__, "backend": "claude_sdk",
+        "model_used": get_settings().model_used,
     }, indent=2))
 
 
